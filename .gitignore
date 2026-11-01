@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+.DS_Store
+*.xcuserstate
+xcuserdata/
+# 生成产物：可用 `swift run MCLauncher --export-snapshots Snapshots` 重建
+Snapshots/
