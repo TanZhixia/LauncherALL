@@ -210,6 +210,8 @@ public struct LauncherButton: View {
         .padding(.trailing, trailingPadding)
         .frame(height: size.height)
         .frame(maxWidth: isFullWidth ? CGFloat.infinity : nil)
+        // 非全宽按钮保持自身理想宽度：避免放在 HStack + Spacer 里被压窄导致标题截断
+        .fixedSize(horizontal: !isFullWidth, vertical: false)
         .background {
             LauncherButtonSurface(variant: variant, cornerRadius: size.cornerRadius, isHovering: isHovering)
         }

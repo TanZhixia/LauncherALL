@@ -125,6 +125,7 @@ public struct SettingsPage: View {
                         ) {
                             browseDirectory()
                         }
+                        .fixedSize()
                     }
                 }
 
@@ -194,6 +195,7 @@ public struct SettingsPage: View {
                     ) {
                         detectJava()
                     }
+                    .fixedSize()
                     Text(javaStatus)
                         .textStyle(.micro, tone: .tertiary)
                         .lineLimit(1)
@@ -534,6 +536,7 @@ public struct SettingsPage: View {
                     ) {
                         checkForUpdate()
                     }
+                    .fixedSize()
                     LauncherButton(
                         "打开日志",
                         systemImage: "doc.text.magnifyingglass",
@@ -542,6 +545,7 @@ public struct SettingsPage: View {
                     ) {
                         openLog()
                     }
+                    .fixedSize()
                     Spacer(minLength: 0)
                     Text(updateStatus)
                         .textStyle(.micro, tone: .tertiary)
@@ -566,9 +570,11 @@ public struct SettingsPage: View {
                 LauncherButton("保存设置", systemImage: "checkmark", variant: .primary) {
                     saveSettings()
                 }
+                .fixedSize()
                 LauncherButton("恢复默认", systemImage: "arrow.counterclockwise", variant: .secondary) {
                     resetSettings()
                 }
+                .fixedSize()
                 Spacer(minLength: LauncherSpace.md)
                 HStack(spacing: LauncherSpace.xs) {
                     LauncherStatusDot(tone: saveHintIsSuccess ? .success : .neutral)
