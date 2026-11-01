@@ -142,7 +142,9 @@ public struct LauncherAppShell: View {
     @ViewBuilder
     private func page(for tab: LauncherTab) -> some View {
         switch tab {
-        case .launch: LaunchPage()
+        case .launch: LaunchPage(onOpenDownload: {
+            withAnimation(LauncherMotion.spring) { selectedTab = .download }
+        })
         case .download: DownloadPage()
         case .settings: SettingsPage()
         case .more: MorePage(onOpenGallery: { showDesignGallery = true })

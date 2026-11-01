@@ -1,21 +1,24 @@
 import SwiftUI
+import AppKit
 
-/// 启动页：页内三个分区（概览 / 实例 / 社区），最小窗口下无需滚动。
+/// 启动页：真实读取已安装版本，启动/停止游戏，展示运行状态与日志入口。
 public struct LaunchPage: View {
     @Environment(\.launcherTheme) private var theme
+    @Environment(LauncherEngine.self) private var engine
 
+    private let onOpenDownload: () -> Void
     @State private var section = "overview"
-    @State private var current: LauncherInstance = LauncherDemoData.currentInstance
-    @State private var isLaunching = false
-    @State private var launchStatus = "已就绪 · 上次退出正常"
+    @State private var selectedVersionID: String?
 
     private let sections: [LauncherSectionItem] = [
         LauncherSectionItem(id: "overview", title: "概览", systemImage: "play.rectangle.fill"),
-        LauncherSectionItem(id: "instances", title: "实例", systemImage: "cube.fill", badge: "\(LauncherDemoData.instances.count)"),
+        LauncherSectionItem(id: "instances", title: "实例", systemImage: "cube.fill"),
         LauncherSectionItem(id: "community", title: "账户与社区", systemImage: "person.2.fill")
     ]
 
-    public init() {}
+    public init(onOpenDownload: @escaping () -> Void = {}) {
+        self.onOpenDownload = onOpenDownload
+    }
 
     public var body: some View {
         LauncherAppPage {
@@ -31,13 +34,28 @@ public struct LaunchPage: View {
                 }
             }
         }
+        .task {
+            if engine.installedVersions.isEmpty {
+                await engine.refreshEnvironment()
+            }
+        }
         .background {
-            Button("") { startGame() }
+            Button("") { launchSelected() }
                 .keyboardShortcut(.return, modifiers: .command)
                 .opacity(0)
                 .frame(width: 0, height: 0)
                 .accessibilityHidden(true)
         }
+    }
+
+    // MARK: - 选中的版本
+
+    private var versions: [InstalledVersion] { engine.installedVersions }
+
+    private var selectedVersion: InstalledVersion? {
+        let id = selectedVersionID ?? engine.activeVersionID
+        if let id, let match = versions.first(where: { $0.id == id }) { return match }
+        return versions.first
     }
 
     // MARK: - 概览
@@ -46,114 +64,160 @@ public struct LaunchPage: View {
         VStack(alignment: .leading, spacing: LauncherSpace.md) {
             heroCard
             quickActions
-            recentInstances
+            recentVersions
         }
     }
 
     private var heroCard: some View {
         GlassPanel(level: .regular, cornerRadius: LauncherRadius.lg, padding: LauncherSpace.lg) {
             HStack(alignment: .center, spacing: LauncherSpace.lg) {
-                LauncherBlockArt(seed: current.name, label: current.version)
+                LauncherBlockArt(seed: selectedVersion?.id ?? "none", label: selectedVersion?.versionType)
                     .frame(width: 168, height: 104)
 
                 VStack(alignment: .leading, spacing: LauncherSpace.xs) {
                     HStack(spacing: LauncherSpace.sm) {
                         LauncherLabel("当前实例")
-                        LauncherBadge(current.loader, tone: .neutral)
-                        LauncherBadge(current.java, tone: .neutral, systemImage: "cup.and.saucer.fill")
+                        if let version = selectedVersion {
+                            LauncherBadge(version.versionType, tone: .neutral)
+                            LauncherBadge("离线账户 · \(engine.settings.playerName)", tone: .neutral)
+                        }
                         Spacer(minLength: 0)
                     }
 
-                    Text(current.name)
+                    Text(selectedVersion?.id ?? "尚未安装版本")
                         .font(.system(size: 22, weight: .bold, design: .rounded))
                         .foregroundStyle(theme.colors.textPrimary)
                         .lineLimit(1)
 
-                    HStack(spacing: LauncherSpace.lg) {
-                        LauncherInlineStat("游戏版本", value: current.version, isMono: true)
-                        LauncherInlineStat("模组", value: "\(current.modCount) 个")
-                        LauncherInlineStat("占用空间", value: current.size, isMono: true)
-                        LauncherInlineStat("上次游玩", value: current.lastPlayed)
-                        LauncherInlineStat("Java", value: current.java, isMono: true)
+                    if let version = selectedVersion {
+                        HStack(spacing: LauncherSpace.lg) {
+                            LauncherInlineStat("版本类型", value: version.versionType)
+                            LauncherInlineStat("客户端", value: version.jarExists ? "jar 就绪" : "缺少 jar")
+                            LauncherInlineStat("上次修改", value: version.lastModified.formatted(date: .abbreviated, time: .omitted))
+                            LauncherInlineStat("Java", value: engine.resolvedJavaLabel ?? "自动")
+                        }
+                    } else {
+                        Text("去「下载」安装一个游戏版本，这里会显示启动入口。")
+                            .font(LauncherTextStyle.caption.font)
+                            .foregroundStyle(theme.colors.textSecondary)
                     }
 
                     HStack(spacing: LauncherSpace.sm) {
-                        LauncherButton(
-                            isLaunching ? "正在启动…" : "启动游戏",
-                            systemImage: "play.fill",
-                            variant: .primary,
-                            size: .large,
-                            isLoading: isLaunching,
-                            shortcut: "⌘↩"
-                        ) {
-                            startGame()
+                        if engine.isBusy {
+                            LauncherButton("正在处理…", systemImage: "hourglass", variant: .primary, size: .large, isLoading: true) {}
+                        } else if case .running = engine.phase {
+                            LauncherButton("停止游戏", systemImage: "stop.fill", variant: .danger, size: .large) {
+                                engine.stop()
+                            }
+                        } else {
+                            LauncherButton(
+                                "启动游戏",
+                                systemImage: "play.fill",
+                                variant: .primary,
+                                size: .large,
+                                shortcut: "⌘↩"
+                            ) {
+                                launchSelected()
+                            }
                         }
-                        LauncherButton("选择版本", systemImage: "list.bullet.rectangle", variant: .secondary, size: .large) {}
-                        LauncherIconButton(systemImage: "ellipsis", variant: .ghost, size: .medium, accessibilityLabel: "更多实例操作") {}
-                        Spacer(minLength: 0)
+
+                        LauncherButton("选择实例", systemImage: "list.bullet.rectangle", variant: .secondary, size: .large) {
+                            withAnimation(LauncherMotion.spring) { section = "instances" }
+                        }
+                        LauncherIconButton(systemImage: "folder", variant: .ghost, size: .medium, accessibilityLabel: "打开游戏目录") {
+                            NSWorkspace.shared.open(engine.settings.resolvedGameDirectory)
+                        }
+
+                        Spacer(minLength: LauncherSpace.sm)
+
+                        HStack(spacing: LauncherSpace.xs) {
+                            LauncherStatusDot(tone: statusTone)
+                            Text(engine.statusText)
+                                .font(LauncherTextStyle.micro.font)
+                                .foregroundStyle(theme.colors.textSecondary)
+                                .lineLimit(1)
+                        }
                     }
 
-                    HStack(spacing: LauncherSpace.xs) {
-                        LauncherStatusDot(tone: isLaunching ? .warning : .success)
-                        Text(launchStatus)
-                            .font(LauncherTextStyle.micro.font)
-                            .foregroundStyle(theme.colors.textSecondary)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        LauncherMonoText("版本隔离 已开启", tone: .tertiary, size: 10)
+                    if case .downloading(_, let progress) = engine.phase {
+                        LauncherProgressBar(
+                            value: progress.fraction,
+                            label: "\(progress.phase) · \(progress.completed)/\(progress.total)",
+                            tone: .accent,
+                            height: 4
+                        )
+                        .frame(maxWidth: 420)
                     }
                 }
             }
+        }
+    }
+
+    private var statusTone: LauncherBadgeTone {
+        switch engine.phase {
+        case .failed: return .danger
+        case .running: return .success
+        case .downloading, .preparing, .launching: return .warning
+        case .idle: return engine.installedVersions.isEmpty ? .neutral : .success
         }
     }
 
     private var quickActions: some View {
         HStack(spacing: LauncherSpace.md) {
-            quickAction("新建实例", icon: "plus.square.on.square", detail: "选择版本并创建")
-            quickAction("导入整合包", icon: "shippingbox.fill", detail: "支持 .zip 或链接")
-            quickAction("浏览服务器", icon: "network", detail: "12 个收藏服务器")
+            quickAction("新建实例", icon: "plus.square.on.square", detail: "选择版本并安装", action: onOpenDownload)
+            quickAction("导入整合包", icon: "shippingbox.fill", detail: "支持 .zip 或链接", action: onOpenDownload)
+            quickAction("刷新实例", icon: "arrow.clockwise", detail: "重新扫描本地版本", action: {
+                Task { await engine.refreshEnvironment() }
+            })
         }
     }
 
-    private func quickAction(_ title: String, icon: String, detail: String) -> some View {
-        LauncherCard(level: .regular, padding: LauncherSpace.sm) {
-            HStack(spacing: LauncherSpace.sm) {
-                Image(systemName: icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(theme.colors.textSecondary)
-                    .frame(width: 28, height: 28)
-                    .background {
-                        RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
-                            .fill(theme.colors.surfaceSubtle)
+    private func quickAction(_ title: String, icon: String, detail: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            LauncherCard(level: .regular, padding: LauncherSpace.sm) {
+                HStack(spacing: LauncherSpace.sm) {
+                    Image(systemName: icon)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.colors.textSecondary)
+                        .frame(width: 28, height: 28)
+                        .background {
+                            RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
+                                .fill(theme.colors.surfaceSubtle)
+                        }
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(title)
+                            .font(LauncherTextStyle.bodyStrong.font)
+                            .foregroundStyle(theme.colors.textPrimary)
+                        Text(detail)
+                            .font(.system(size: 10))
+                            .foregroundStyle(theme.colors.textTertiary)
+                            .lineLimit(1)
                     }
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(title)
-                        .font(LauncherTextStyle.bodyStrong.font)
-                        .foregroundStyle(theme.colors.textPrimary)
-                    Text(detail)
-                        .font(.system(size: 10))
-                        .foregroundStyle(theme.colors.textTertiary)
-                        .lineLimit(1)
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .buttonStyle(.plain)
         .launcherHoverEffect(scale: 1.01)
     }
 
-    private var recentInstances: some View {
+    private var recentVersions: some View {
         LauncherCard(level: .regular, padding: LauncherSpace.md) {
             VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
                 LauncherSectionHeader(
                     title: "最近游玩",
-                    subtitle: "点击切换当前实例",
+                    subtitle: engine.installedVersions.isEmpty ? "本地还没有安装任何版本" : "点击切换当前实例",
                     accessory: AnyView(LauncherButton("全部实例", variant: .ghost, size: .small) {
                         withAnimation(LauncherMotion.spring) { section = "instances" }
                     })
                 )
-                ForEach(LauncherDemoData.instances.prefix(3)) { instance in
-                    instanceRow(instance)
+                if versions.isEmpty {
+                    emptyState
+                } else {
+                    ForEach(versions.prefix(3)) { version in
+                        versionRow(version)
+                    }
                 }
             }
         }
@@ -166,34 +230,64 @@ public struct LaunchPage: View {
             VStack(alignment: .leading, spacing: LauncherSpace.sm) {
                 LauncherSectionHeader(
                     title: "已安装实例",
-                    subtitle: "共 \(LauncherDemoData.instances.count) 个 · 当前：\(current.name)",
-                    accessory: AnyView(LauncherButton("新建", systemImage: "plus", variant: .secondary, size: .small) {})
+                    subtitle: "共 \(versions.count) 个 · 游戏目录：\(engine.settings.resolvedGameDirectory.path)",
+                    accessory: AnyView(LauncherButton("刷新", systemImage: "arrow.clockwise", variant: .secondary, size: .small) {
+                        Task { await engine.refreshEnvironment() }
+                    })
                 )
-                ForEach(LauncherDemoData.instances) { instance in
-                    instanceRow(instance)
+                if versions.isEmpty {
+                    emptyState
+                } else {
+                    ForEach(versions) { version in
+                        versionRow(version)
+                    }
                 }
                 HStack(spacing: LauncherSpace.sm) {
-                    LauncherMonoText("共 4 个实例 · 占用 14.9 GB · 2 个版本可更新", tone: .tertiary, size: 10)
+                    LauncherMonoText(
+                        "检测到 \(engine.javaRuntimes.count) 个 Java · \(engine.installedVersions.count) 个版本",
+                        tone: .tertiary,
+                        size: 10
+                    )
                     Spacer(minLength: 0)
-                    LauncherButton("导入实例", systemImage: "square.and.arrow.down", variant: .ghost, size: .small) {}
+                    LauncherButton("打开游戏目录", systemImage: "folder", variant: .ghost, size: .small) {
+                        NSWorkspace.shared.open(engine.settings.resolvedGameDirectory)
+                    }
+                    LauncherButton("安装新版本", systemImage: "plus", variant: .secondary, size: .small) {
+                        onOpenDownload()
+                    }
                 }
                 .padding(.top, LauncherSpace.xxs)
             }
         }
     }
 
-    private func instanceRow(_ instance: LauncherInstance) -> some View {
+    private var emptyState: some View {
+        LauncherEmptyState(
+            systemImage: "cube.transparent",
+            title: "还没有安装任何版本",
+            message: "前往「下载」选择一个游戏版本或整合包，安装后即可在这里启动。",
+            actionTitle: "去下载",
+            onAction: onOpenDownload
+        )
+    }
+
+    private func versionRow(_ version: InstalledVersion) -> some View {
         LauncherListRow(
-            title: instance.name,
-            subtitle: "模组 \(instance.modCount) 个 · 上次游玩 \(instance.lastPlayed)",
+            title: version.id,
+            subtitle: "\(version.versionType) · \(version.jarExists ? "客户端就绪" : "缺少客户端 jar")",
             systemImage: "cube.fill",
-            badge: instance.loader,
-            accessory: AnyView(LauncherMonoText(instance.size, tone: .tertiary, size: 10)),
-            isSelected: instance.id == current.id,
+            badge: version.versionType,
+            accessory: AnyView(
+                LauncherMonoText(
+                    version.lastModified.formatted(date: .abbreviated, time: .omitted),
+                    tone: .tertiary,
+                    size: 10
+                )
+            ),
+            isSelected: version.id == selectedVersion?.id,
             action: {
                 withAnimation(LauncherMotion.spring) {
-                    current = instance
-                    launchStatus = "已就绪 · 上次退出正常"
+                    selectedVersionID = version.id
                 }
             }
         )
@@ -209,25 +303,29 @@ public struct LaunchPage: View {
             }
             newsCard
             LauncherBanner(
-                title: "Java 21 已就绪",
-                message: "检测到 2 个可更新模组，建议启动前完成更新。",
-                tone: .info,
-                actionTitle: "查看详情"
-            ) {}
+                title: engine.installedVersions.isEmpty ? "尚未安装版本" : "离线启动已就绪",
+                message: engine.installedVersions.isEmpty
+                    ? "去「下载」安装一个版本后即可启动；账户为离线模式。"
+                    : "当前使用离线账户「\(engine.settings.playerName)」，启动无需联网验证。",
+                tone: engine.installedVersions.isEmpty ? .warning : .info,
+                actionTitle: engine.installedVersions.isEmpty ? "去下载" : nil
+            ) {
+                onOpenDownload()
+            }
         }
     }
 
     private var accountCard: some View {
         LauncherCard(level: .regular, padding: LauncherSpace.md) {
             VStack(alignment: .leading, spacing: LauncherSpace.sm) {
-                LauncherSectionHeader(title: "账户", subtitle: LauncherDemoData.account.type)
+                LauncherSectionHeader(title: "账户", subtitle: "离线模式 · 正版登录待接入")
                 HStack(spacing: LauncherSpace.sm) {
-                    LauncherAvatar(name: LauncherDemoData.account.name, systemImage: "person.fill", size: 34, isOnline: true)
+                    LauncherAvatar(name: engine.settings.playerName, systemImage: "person.fill", size: 34, isOnline: true)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(LauncherDemoData.account.name)
+                        Text(engine.settings.playerName)
                             .font(LauncherTextStyle.bodyStrong.font)
                             .foregroundStyle(theme.colors.textPrimary)
-                        Text("上次登录 \(LauncherDemoData.account.lastLogin)")
+                        Text("离线 UUID 由用户名生成")
                             .font(LauncherTextStyle.micro.font)
                             .foregroundStyle(theme.colors.textTertiary)
                     }
@@ -248,7 +346,7 @@ public struct LaunchPage: View {
                 LauncherSectionHeader(
                     title: "服务器状态",
                     subtitle: "2 个收藏 · 1 个离线",
-                    accessory: AnyView(LauncherBadge("全部在线", tone: .success))
+                    accessory: AnyView(LauncherBadge("示例数据", tone: .neutral))
                 )
                 ForEach(LauncherDemoData.servers) { server in
                     HStack(spacing: LauncherSpace.sm) {
@@ -274,7 +372,7 @@ public struct LaunchPage: View {
             VStack(alignment: .leading, spacing: LauncherSpace.xs) {
                 LauncherSectionHeader(
                     title: "新闻与公告",
-                    subtitle: "来自 Minecraft 官网",
+                    subtitle: "示例数据 · 未接真实资讯",
                     accessory: AnyView(LauncherIconButton(systemImage: "arrow.up.right", variant: .ghost, size: .small, accessibilityLabel: "打开官网") {})
                 )
                 ForEach(LauncherDemoData.news) { item in
@@ -298,16 +396,10 @@ public struct LaunchPage: View {
         }
     }
 
-    // MARK: - 交互
+    // MARK: - 行动
 
-    private func startGame() {
-        guard !isLaunching else { return }
-        isLaunching = true
-        launchStatus = "正在启动 \(current.name)…"
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_400_000_000)
-            isLaunching = false
-            launchStatus = "运行中 · 已启动 0 分钟"
-        }
+    private func launchSelected() {
+        guard let version = selectedVersion, !engine.isBusy else { return }
+        Task { await engine.launch(versionID: version.id) }
     }
 }

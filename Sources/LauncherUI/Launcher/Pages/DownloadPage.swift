@@ -1,28 +1,38 @@
+import AppKit
 import Foundation
 import SwiftUI
 
-/// 下载页：页内三个分区（版本库 / 整合包 / 下载任务），最小窗口下无需滚动。
+/// 下载页：真实 Mojang 版本清单 + 真实安装进度；页内三个分区，最小窗口下无需滚动。
 public struct DownloadPage: View {
+    @Environment(LauncherEngine.self) private var engine
+
     @State private var section = "versions"
 
+    // 版本库：真实清单、筛选与排序
     @State private var searchText = ""
-    @State private var filter: VersionFilter = .all
-    @State private var sortMode: SortMode = .newest
-    @State private var versions: [LauncherVersionItem] = LauncherDemoData.versions + DemoModpacks.items
+    @State private var typeFilter: VersionTypeFilter = DownloadPage.defaultTypeFilter
+    @State private var sortMode: VersionSort = .newest
+    @State private var manifest: VersionManifest? = DownloadPage.launchManifestCache
+    @State private var isLoadingManifest = DownloadPage.launchManifestCache == nil
+    @State private var manifestError: String?
+    @State private var lastInstallID: String?
 
-    @State private var pausedTaskIDs: Set<String> = []
-    @State private var cancelledTaskIDs: Set<String> = []
-
-    @State private var usedGB: Double = 14.9
-    @State private var isCleaning = false
-    @State private var didClean = false
-    @State private var downloadSource = "official"
-    @State private var autoCleanOldVersions = true
-
-    @State private var refreshed = false
-    @State private var folderOpened = false
-    @State private var filterHint: String?
+    // 整合包：仍为页面内演示数据（后端暂不支持整合包安装）
+    @State private var modpacks: [LauncherVersionItem] = DemoModpacks.items
     @State private var importHint: String?
+
+    // 下载任务分区
+    @State private var isRefreshingInstalled = false
+
+    /// 首帧快速展示：读取与 MojangManifestService 相同位置的清单缓存，随后仍异步刷新。
+    private static let launchManifestCache: VersionManifest? = readCachedManifest()
+
+    /// 默认筛选跟随设置里的更新渠道：快照渠道默认看快照，其余渠道默认看正式版。
+    private static let defaultTypeFilter: VersionTypeFilter =
+        LauncherSettings.shared.updateChannel == "snapshot" ? .snapshot : .release
+
+    /// 列表一次最多展示的行数，保证最小窗口不出现纵向滚动。
+    private let maxVisibleVersions = 6
 
     public init() {}
 
@@ -31,30 +41,37 @@ public struct DownloadPage: View {
             LauncherPageHeader(title: "下载", subtitle: "安装游戏版本、加载器与整合包") {
                 HStack(spacing: LauncherSpace.sm) {
                     LauncherButton(
-                        folderOpened ? "已定位" : "打开文件夹",
-                        systemImage: folderOpened ? "checkmark" : "folder",
+                        "打开文件夹",
+                        systemImage: "folder",
                         variant: .secondary,
                         size: .small
                     ) {
-                        openFolder()
+                        NSWorkspace.shared.open(engine.settings.resolvedGameDirectory)
                     }
                     LauncherButton(
-                        refreshed ? "已刷新" : "刷新列表",
-                        systemImage: refreshed ? "checkmark" : "arrow.clockwise",
+                        "刷新列表",
+                        systemImage: "arrow.clockwise",
                         variant: .secondary,
-                        size: .small
+                        size: .small,
+                        isLoading: isLoadingManifest
                     ) {
-                        refreshList()
+                        refreshAll()
                     }
                 }
             }
             .padding(.bottom, LauncherSpace.xxs)
 
             LauncherSectionLayout {
-                LauncherSectionRail(items: sections, selection: $section, header: nil)
+                LauncherSectionRail(items: sections, selection: $section, header: "下载")
             } content: {
                 sectionContent
             }
+        }
+        .task {
+            if engine.installedVersions.isEmpty {
+                await engine.refreshEnvironment()
+            }
+            await loadManifest()
         }
     }
 
@@ -66,19 +83,19 @@ public struct DownloadPage: View {
                 id: "versions",
                 title: "版本库",
                 systemImage: "square.stack.3d.up.fill",
-                badge: "\(versionItems.count)"
+                badge: manifest.map { "\($0.versions.count)" }
             ),
             LauncherSectionItem(
                 id: "modpacks",
                 title: "整合包",
                 systemImage: "shippingbox.fill",
-                badge: "\(modpackItems.count)"
+                badge: "\(modpacks.count)"
             ),
             LauncherSectionItem(
                 id: "tasks",
                 title: "下载任务",
                 systemImage: "arrow.down.circle.fill",
-                badge: "\(visibleTasks.count)"
+                badge: engine.isBusy ? "1" : nil
             )
         ]
     }
@@ -95,26 +112,86 @@ public struct DownloadPage: View {
         }
     }
 
-    // MARK: - 分区一：版本库
+    // MARK: - 分区一：版本库（真实清单）
 
     private var versionSection: some View {
         VStack(alignment: .leading, spacing: LauncherSpace.md) {
-            versionToolbar
-            versionList
+            if manifest == nil {
+                manifestPlaceholder
+            } else {
+                versionToolbar
+                versionList
+                if let manifestError {
+                    LauncherBanner(
+                        title: "清单刷新失败，正在使用本地缓存",
+                        message: manifestError,
+                        tone: .warning,
+                        actionTitle: "重试",
+                        onAction: { refreshManifest(forceRefresh: true) }
+                    )
+                }
+            }
+
+            if case .failed(let message) = engine.phase, let lastInstallID {
+                LauncherBanner(
+                    title: "安装失败：\(lastInstallID)",
+                    message: message,
+                    tone: .danger,
+                    actionTitle: "重试",
+                    onAction: { install(lastInstallID) }
+                )
+            }
+        }
+    }
+
+    /// 加载中 / 首次失败：骨架占位或错误横幅。
+    @ViewBuilder
+    private var manifestPlaceholder: some View {
+        if let manifestError {
+            VStack(spacing: LauncherSpace.md) {
+                LauncherBanner(
+                    title: "无法获取版本清单",
+                    message: manifestError,
+                    tone: .danger,
+                    actionTitle: "重试",
+                    onAction: { refreshManifest(forceRefresh: true) }
+                )
+                Text("版本清单来自 Mojang 官方接口，首次加载需要联网。")
+                    .textStyle(.micro, tone: .tertiary)
+            }
+        } else {
+            LauncherCard(level: .regular, padding: LauncherSpace.lg) {
+                VStack(alignment: .leading, spacing: LauncherSpace.sm) {
+                    HStack(spacing: LauncherSpace.sm) {
+                        LauncherSpinner(size: 16)
+                        Text("正在从 Mojang 获取版本清单…")
+                            .textStyle(.micro, tone: .secondary)
+                        Spacer(minLength: LauncherSpace.sm)
+                        LauncherBadge("12 小时缓存", tone: .neutral)
+                    }
+                    ForEach(0..<5, id: \.self) { _ in
+                        LauncherSkeleton(
+                            height: LauncherControl.large,
+                            cornerRadius: LauncherRadius.md
+                        )
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
     /// 搜索 / 类型筛选 / 排序：只在版本库分区出现一次。
     private var versionToolbar: some View {
         HStack(spacing: LauncherSpace.md) {
-            LauncherSearchField(text: $searchText, placeholder: "搜索版本号或加载器")
-                .frame(width: 220)
+            LauncherSearchField(text: $searchText, placeholder: "搜索版本号")
+                .frame(width: 200)
 
             HStack(spacing: LauncherSpace.sm) {
-                ForEach(VersionFilter.allCases) { option in
-                    LauncherChip(option.rawValue, isSelected: filter == option) {
+                ForEach(VersionTypeFilter.allCases) { option in
+                    LauncherChip(option.rawValue, isSelected: typeFilter == option) {
                         withAnimation(LauncherMotion.spring) {
-                            filter = option
+                            typeFilter = option
                         }
                     }
                 }
@@ -134,14 +211,11 @@ public struct DownloadPage: View {
                     title: "版本列表",
                     subtitle: versionListSubtitle,
                     accessory: AnyView(
-                        LauncherBadge(
-                            refreshed ? "已刷新" : "\(visibleVersions.count) 个",
-                            tone: refreshed ? .success : .neutral
-                        )
+                        LauncherBadge("\(displayedVersions.count) 个", tone: .neutral)
                     )
                 )
 
-                if visibleVersions.isEmpty {
+                if displayedVersions.isEmpty {
                     LauncherEmptyState(
                         systemImage: "magnifyingglass",
                         title: "没有匹配的版本",
@@ -152,61 +226,51 @@ public struct DownloadPage: View {
                     .frame(maxWidth: .infinity)
                 } else {
                     VStack(spacing: LauncherSpace.xxs) {
-                        ForEach(visibleVersions) { item in
-                            versionRow(item)
+                        ForEach(displayedVersions) { version in
+                            versionRow(version)
                         }
                     }
-                    .launcherAnimation(LauncherMotion.spring, value: versions)
-                }
-
-                if let filterHint {
-                    Text(filterHint)
-                        .textStyle(.micro, tone: .tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    .launcherAnimation(LauncherMotion.spring, value: engine.phase)
                 }
 
                 LauncherDivider()
 
                 HStack(spacing: LauncherSpace.sm) {
-                    LauncherStatusDot(tone: .success)
-                    Text("版本清单已同步 · 最近检查 今天 10:32")
-                        .textStyle(.micro, tone: .tertiary)
+                    LauncherMonoText(
+                        "显示 \(displayedVersions.count) / 筛选后 \(filteredVersions.count) 个 · 已安装 \(installedIDs.count) 个",
+                        tone: .tertiary,
+                        size: 10
+                    )
                     Spacer(minLength: LauncherSpace.sm)
-                    LauncherMonoText(LauncherDemoData.versionDirectory, tone: .tertiary, size: 10)
-                        .lineLimit(1)
+                    LauncherMonoText("来源：Mojang 官方清单", tone: .tertiary, size: 10)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func versionRow(_ item: LauncherVersionItem) -> some View {
+    private func versionRow(_ version: VersionSummary) -> some View {
         LauncherListRow(
-            title: item.version,
-            subtitle: "\(item.released) · \(item.size) · \(item.note)",
-            systemImage: icon(for: item.kind),
-            badge: item.kind.rawValue,
-            accessory: AnyView(statusAccessory(for: item))
+            title: version.id,
+            subtitle: "发布于 \(releaseDate(version.releaseTime))",
+            systemImage: icon(for: version.type),
+            badge: typeLabel(version.type),
+            accessory: AnyView(statusAccessory(for: version))
         )
     }
 
-    /// 行内三态：未安装 → 安装按钮；安装中 → 进度条；已安装 → 次要按钮。
+    /// 行内状态：安装中显示真实进度；已安装显示禁用按钮；其余显示安装按钮。
     @ViewBuilder
-    private func statusAccessory(for item: LauncherVersionItem) -> some View {
-        switch item.state {
-        case .available:
-            LauncherButton(
-                "安装",
-                systemImage: "arrow.down.circle",
-                variant: .primary,
-                size: .small
-            ) {
-                startInstall(item.id)
+    private func statusAccessory(for version: VersionSummary) -> some View {
+        if case .downloading(let versionID, let progress) = engine.phase, versionID == version.id {
+            VStack(alignment: .trailing, spacing: LauncherSpace.xxs) {
+                Text(progress.phase)
+                    .textStyle(.micro, tone: .secondary)
+                    .lineLimit(1)
+                LauncherProgressBar(value: progress.fraction)
+                    .frame(width: 120)
             }
-        case .installing(let progress):
-            LauncherProgressBar(value: progress)
-                .frame(width: 90)
-        case .installed:
+        } else if installedIDs.contains(version.id) {
             LauncherButton(
                 "已安装",
                 systemImage: "checkmark",
@@ -214,6 +278,16 @@ public struct DownloadPage: View {
                 size: .small,
                 isDisabled: true
             ) {}
+        } else {
+            LauncherButton(
+                "安装",
+                systemImage: "arrow.down.circle",
+                variant: .primary,
+                size: .small,
+                isDisabled: engine.isBusy
+            ) {
+                install(version.id)
+            }
         }
     }
 
@@ -223,7 +297,7 @@ public struct DownloadPage: View {
         VStack(alignment: .leading, spacing: LauncherSpace.md) {
             LauncherSectionHeader(
                 title: "整合包",
-                subtitle: "\(modpackItems.count) 个整合包 · 安装过程为本地演示",
+                subtitle: "\(modpacks.count) 个整合包 · 安装过程为页面内演示",
                 accessory: AnyView(
                     LauncherButton(
                         "导入整合包",
@@ -240,11 +314,11 @@ public struct DownloadPage: View {
                 columns: Array(repeating: GridItem(.flexible(), spacing: LauncherSpace.md), count: 3),
                 spacing: LauncherSpace.md
             ) {
-                ForEach(modpackItems) { item in
+                ForEach(modpacks) { item in
                     modpackCard(item)
                 }
             }
-            .launcherAnimation(LauncherMotion.spring, value: versions)
+            .launcherAnimation(LauncherMotion.spring, value: modpacks)
 
             if let importHint {
                 Text(importHint)
@@ -278,7 +352,7 @@ public struct DownloadPage: View {
         }
     }
 
-    /// 整合包卡片的三态：安装 / 进度 / 已安装。
+    /// 整合包卡片三态（页面内演示，不触发真实安装）。
     @ViewBuilder
     private func modpackStatus(for item: LauncherVersionItem) -> some View {
         switch item.state {
@@ -290,7 +364,7 @@ public struct DownloadPage: View {
                 size: .small,
                 isFullWidth: true
             ) {
-                startInstall(item.id)
+                startModpackDemoInstall(item.id)
             }
         case .installing(let progress):
             LauncherProgressBar(value: progress)
@@ -306,11 +380,11 @@ public struct DownloadPage: View {
         }
     }
 
-    // MARK: - 分区三：下载任务
+    // MARK: - 分区三：下载任务（真实安装进度）
 
     private var taskSection: some View {
         HStack(alignment: .top, spacing: LauncherSpace.md) {
-            downloadQueueCard
+            currentTaskCard
                 .frame(maxWidth: .infinity)
 
             VStack(spacing: LauncherSpace.md) {
@@ -321,109 +395,72 @@ public struct DownloadPage: View {
         }
     }
 
-    private var downloadQueueCard: some View {
+    private var currentTaskCard: some View {
         LauncherCard(level: .regular, padding: LauncherSpace.md) {
             VStack(alignment: .leading, spacing: LauncherSpace.md) {
                 LauncherSectionHeader(
-                    title: "下载队列",
-                    subtitle: queueSubtitle,
-                    accessory: AnyView(
-                        HStack(spacing: LauncherSpace.sm) {
-                            LauncherBadge(queueBadgeText, tone: queueBadgeTone)
-                            LauncherButton(
-                                "清空",
-                                variant: .ghost,
-                                size: .small,
-                                isDisabled: visibleTasks.isEmpty
-                            ) {
-                                clearQueue()
-                            }
-                        }
-                    )
+                    title: "当前安装任务",
+                    subtitle: taskSubtitle,
+                    accessory: AnyView(LauncherBadge(taskBadgeText, tone: taskBadgeTone))
                 )
 
-                if visibleTasks.isEmpty {
-                    LauncherEmptyState(
-                        systemImage: "checkmark.circle",
-                        title: "下载队列为空",
-                        message: "所有任务都已完成或被取消。",
-                        actionTitle: "恢复演示任务",
-                        onAction: {
-                            withAnimation(LauncherMotion.spring) {
-                                cancelledTaskIDs.removeAll()
-                                pausedTaskIDs.removeAll()
-                            }
-                        }
-                    )
-                    .frame(maxWidth: .infinity)
-                } else {
-                    VStack(spacing: LauncherSpace.md) {
-                        ForEach(visibleTasks) { task in
-                            queueRow(task)
-                        }
-                    }
-
-                    LauncherDivider()
-
-                    HStack(spacing: LauncherSpace.sm) {
-                        LauncherMonoText(queueFooter, tone: .tertiary, size: 10)
-                        Spacer(minLength: LauncherSpace.sm)
-                        LauncherStatusDot(tone: .success)
-                        Text("网络稳定")
-                            .textStyle(.micro, tone: .tertiary)
-                    }
-                }
+                taskBody
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func queueRow(_ task: LauncherDownloadTask) -> some View {
-        let isPaused = pausedTaskIDs.contains(task.id)
-        return VStack(alignment: .leading, spacing: LauncherSpace.xs) {
-            HStack(spacing: LauncherSpace.sm) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(task.title)
-                        .textStyle(.bodyStrong)
-                        .lineLimit(1)
-                    Text(task.detail)
-                        .textStyle(.micro, tone: .tertiary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: LauncherSpace.sm)
-
-                VStack(alignment: .trailing, spacing: 1) {
+    @ViewBuilder
+    private var taskBody: some View {
+        switch engine.phase {
+        case .downloading(let versionID, let progress):
+            VStack(alignment: .leading, spacing: LauncherSpace.sm) {
+                HStack(spacing: LauncherSpace.sm) {
+                    LauncherMonoText(versionID, tone: .primary, size: 12)
+                    Spacer(minLength: LauncherSpace.sm)
                     LauncherMonoText(
-                        isPaused ? "已暂停" : task.speed,
-                        tone: isPaused ? .warning : .tertiary,
+                        "\(progress.completed) / \(progress.total) 个文件",
+                        tone: .tertiary,
                         size: 10
                     )
-                    LauncherMonoText(task.total, tone: .tertiary, size: 10)
                 }
-
-                if task.progress != nil {
-                    LauncherIconButton(
-                        systemImage: isPaused ? "play.fill" : "pause.fill",
-                        variant: .ghost,
-                        size: .small,
-                        accessibilityLabel: isPaused ? "继续 \(task.title)" : "暂停 \(task.title)"
-                    ) {
-                        togglePause(task.id)
-                    }
-                }
-
-                LauncherIconButton(
-                    systemImage: "xmark",
-                    variant: .ghost,
-                    size: .small,
-                    accessibilityLabel: "取消 \(task.title)"
-                ) {
-                    cancel(task)
+                LauncherProgressBar(value: progress.fraction, label: progress.phase)
+                HStack(spacing: LauncherSpace.xs) {
+                    LauncherStatusDot(tone: .warning)
+                    Text("真实下载中 · 耗时取决于网络，请勿退出启动器")
+                        .textStyle(.micro, tone: .tertiary)
+                        .lineLimit(2)
                 }
             }
-
-            LauncherProgressBar(value: task.progress, tone: isPaused ? .warning : .accent)
+        case .preparing(let message):
+            VStack(alignment: .leading, spacing: LauncherSpace.sm) {
+                Text(message)
+                    .textStyle(.body, tone: .secondary)
+                LauncherProgressBar(label: "准备中…")
+            }
+        case .failed(let message):
+            LauncherBanner(
+                title: "安装任务失败",
+                message: message,
+                tone: .danger,
+                actionTitle: lastInstallID == nil ? nil : "重试",
+                onAction: {
+                    if let lastInstallID { install(lastInstallID) }
+                }
+            )
+        default:
+            LauncherEmptyState(
+                systemImage: "arrow.down.circle",
+                title: "当前没有安装任务",
+                message: engine.installedVersions.isEmpty
+                    ? "去版本库挑选一个版本开始安装。"
+                    : "已安装 \(engine.installedVersions.count) 个版本，可以继续安装其他版本。",
+                actionTitle: "去版本库",
+                onAction: {
+                    withAnimation(LauncherMotion.spring) { section = "versions" }
+                }
+            )
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -432,34 +469,26 @@ public struct DownloadPage: View {
             VStack(alignment: .leading, spacing: LauncherSpace.sm) {
                 LauncherSectionHeader(
                     title: "磁盘占用",
-                    subtitle: "版本与资源",
+                    subtitle: "游戏目录所在卷",
                     accessory: AnyView(
-                        LauncherBadge(
-                            didClean ? "已释放 1.2 GB" : "空间充足",
-                            tone: didClean ? .success : .neutral
-                        )
+                        LauncherBadge("\(engine.installedVersions.count) 个版本", tone: .neutral)
                     )
                 )
 
-                LauncherProgressBar(
-                    value: usedGB / 99.1,
-                    label: "已用 \(usedSpaceText) / 99.1 GB"
-                )
+                LauncherProgressBar(value: volumeUsedFraction, label: "可用 \(volumeFreeText)")
 
-                VStack(spacing: LauncherSpace.xs) {
-                    LauncherKeyValueRow(key: "可用空间", value: availableSpaceText)
-                    LauncherKeyValueRow(key: "已安装实例", value: "\(LauncherDemoData.instances.count) 个")
-                }
+                LauncherKeyValueRow(key: "卷容量", value: volumeTotalText)
+                LauncherKeyValueRow(key: "游戏目录", value: gameDirectorySummary)
 
                 LauncherButton(
-                    isCleaning ? "正在清理…" : "清理缓存",
-                    systemImage: "trash",
+                    isRefreshingInstalled ? "刷新中…" : "刷新已安装",
+                    systemImage: "arrow.clockwise",
                     variant: .secondary,
                     size: .small,
-                    isLoading: isCleaning,
+                    isLoading: isRefreshingInstalled,
                     isFullWidth: true
                 ) {
-                    cleanCache()
+                    refreshInstalled()
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -473,14 +502,14 @@ public struct DownloadPage: View {
 
                 LauncherDropdown(
                     options: sourceOptions,
-                    selection: $downloadSource,
+                    selection: sourceBinding,
                     placeholder: "选择下载源"
                 )
 
                 LauncherToggle(
                     "自动清理旧版本",
-                    isOn: $autoCleanOldVersions,
-                    subtitle: "只保留最近两个版本文件"
+                    isOn: autoCleanBinding,
+                    subtitle: "安装完成后清理旧版本文件"
                 )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -489,223 +518,212 @@ public struct DownloadPage: View {
 
     // MARK: - 版本数据
 
-    /// 版本库条目：排除整合包。
-    private var versionItems: [LauncherVersionItem] {
-        versions.filter { $0.kind != .modpack }
+    private var installedIDs: Set<String> {
+        Set(engine.installedVersions.map(\.id))
     }
 
-    /// 整合包条目：由现有演示数据与页面内演示数据组成。
-    private var modpackItems: [LauncherVersionItem] {
-        versions.filter { $0.kind == .modpack }
-    }
-
-    /// 当前可见版本：类型 → 搜索 → 排序。
-    private var visibleVersions: [LauncherVersionItem] {
+    /// 筛选 + 搜索 + 排序后的版本。
+    private var filteredVersions: [VersionSummary] {
+        guard let manifest else { return [] }
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let filtered = versionItems.filter { item in
-            guard filter.matches(item.kind) else { return false }
+        var items = manifest.versions.filter { version in
+            guard typeFilter.matches(version.type) else { return false }
             guard !query.isEmpty else { return true }
-            return item.version.lowercased().contains(query)
-                || item.note.lowercased().contains(query)
-                || item.kind.rawValue.contains(query)
+            return version.id.lowercased().contains(query)
         }
 
         switch sortMode {
         case .newest:
-            return filtered.sorted { $0.released > $1.released }
+            items.sort { $0.releaseTime > $1.releaseTime }
         case .version:
-            return filtered.sorted {
-                $0.version.compare($1.version, options: .numeric) == .orderedDescending
+            items.sort { $0.id.compare($1.id, options: .numeric) == .orderedDescending }
+        case .installedFirst:
+            items.sort { lhs, rhs in
+                let lhsInstalled = installedIDs.contains(lhs.id)
+                let rhsInstalled = installedIDs.contains(rhs.id)
+                if lhsInstalled != rhsInstalled { return lhsInstalled }
+                return lhs.releaseTime > rhs.releaseTime
             }
-        case .size:
-            return filtered.sorted { sizeInMB($0.size) > sizeInMB($1.size) }
         }
+        return items
+    }
+
+    /// 截断后的展示列表，保证最小窗口不滚动。
+    private var displayedVersions: [VersionSummary] {
+        Array(filteredVersions.prefix(maxVisibleVersions))
     }
 
     private var versionListSubtitle: String {
-        let installedCount = versionItems.filter { $0.state == .installed }.count
-        let shown = visibleVersions.count
-        if shown != versionItems.count {
-            return "筛选出 \(shown) 个 / 共 \(versionItems.count) 个 · 已安装 \(installedCount) 个"
+        guard let manifest else { return "正在加载清单" }
+        if displayedVersions.count < filteredVersions.count {
+            return "Mojang 清单 \(manifest.versions.count) 个 · 当前筛选 \(filteredVersions.count) 个 · 已安装 \(installedIDs.count) 个"
         }
-        return "共 \(versionItems.count) 个 · 已安装 \(installedCount) 个 · \(sortMode.rawValue)"
+        return "当前筛选 \(filteredVersions.count) 个 · 已安装 \(installedIDs.count) 个"
     }
 
-    private var sortOptions: [LauncherSegment<SortMode>] {
-        SortMode.allCases.map { LauncherSegment(id: $0, title: $0.rawValue) }
+    private var sortOptions: [LauncherSegment<VersionSort>] {
+        VersionSort.allCases.map { LauncherSegment(id: $0, title: $0.rawValue) }
     }
+
+    private func releaseDate(_ text: String) -> String {
+        String(text.prefix(10))
+    }
+
+    private func typeLabel(_ type: String) -> String {
+        switch type {
+        case "release": return "正式版"
+        case "snapshot": return "快照"
+        case "old_beta": return "远古 Beta"
+        case "old_alpha": return "远古 Alpha"
+        default: return type
+        }
+    }
+
+    private func icon(for type: String) -> String {
+        switch type {
+        case "release": return "cube.fill"
+        case "snapshot": return "flask"
+        default: return "shippingbox.fill"
+        }
+    }
+
+    // MARK: - 下载源与磁盘数据
 
     private var sourceOptions: [LauncherSegment<String>] {
         [
-            LauncherSegment(id: "official", title: "官方源 · 上海", systemImage: "globe"),
-            LauncherSegment(id: "mirror", title: "镜像源 · 新加坡", systemImage: "bolt.fill")
+            LauncherSegment(id: "official", title: "官方源 · 自动选择", systemImage: "globe"),
+            LauncherSegment(id: "mirror", title: "镜像源 · 加速", systemImage: "bolt.fill")
         ]
     }
 
+    private var sourceBinding: Binding<String> {
+        Binding(
+            get: { engine.settings.downloadSource },
+            set: { engine.settings.downloadSource = $0 }
+        )
+    }
+
+    private var autoCleanBinding: Binding<Bool> {
+        Binding(
+            get: { engine.settings.autoCleanOldVersions },
+            set: { engine.settings.autoCleanOldVersions = $0 }
+        )
+    }
+
     private var sourceDetail: String {
-        downloadSource == "mirror"
-            ? "镜像源 · 新加坡节点 · 64 ms"
-            : "官方源 · 上海节点 · 32 ms"
+        engine.settings.downloadSource == "mirror"
+            ? "镜像源 · 已写入启动器设置"
+            : "官方源 · 已写入启动器设置"
     }
 
-    /// 把 "1.2 GB" / "18 MB" 归一化成 MB，用于大小排序。
-    private func sizeInMB(_ text: String) -> Double {
-        let parts = text.split(separator: " ")
-        guard let value = Double(parts.first ?? "") else { return 0 }
-        let isGB = parts.count > 1 && parts[1].uppercased() == "GB"
-        return isGB ? value * 1024 : value
+    private var gameDirectorySummary: String {
+        let name = engine.settings.resolvedGameDirectory.lastPathComponent
+        return name.isEmpty ? engine.settings.resolvedGameDirectory.path : "…/\(name)"
     }
 
-    private func icon(for kind: LauncherVersionItem.Kind) -> String {
-        switch kind {
-        case .release: return "globe"
-        case .snapshot: return "flask"
-        case .loader: return "wrench.and.screwdriver"
-        case .modpack: return "shippingbox"
+    /// 磁盘卷信息（真实文件系统，同步读取很快）。
+    private var volumeInfo: (free: String, total: String, usedFraction: Double) {
+        let directory = engine.settings.resolvedGameDirectory
+        guard
+            let values = try? directory.resourceValues(
+                forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey]
+            ),
+            let totalBytes = values.volumeTotalCapacity, totalBytes > 0
+        else {
+            return ("—", "—", 0)
+        }
+        let freeBytes = values.volumeAvailableCapacityForImportantUsage ?? 0
+        let usedFraction = min(1, max(0, 1 - Double(freeBytes) / Double(totalBytes)))
+        return (
+            ByteCountFormatter.string(fromByteCount: freeBytes, countStyle: .file),
+            ByteCountFormatter.string(fromByteCount: Int64(totalBytes), countStyle: .file),
+            usedFraction
+        )
+    }
+
+    private var volumeFreeText: String { volumeInfo.free }
+    private var volumeTotalText: String { volumeInfo.total }
+    private var volumeUsedFraction: Double { volumeInfo.usedFraction }
+
+    // MARK: - 任务状态文案
+
+    private var taskSubtitle: String {
+        switch engine.phase {
+        case .downloading: return "真实下载 · 文件进度实时更新"
+        case .preparing: return "正在准备安装环境"
+        case .failed: return "上次任务失败"
+        default: return engine.installedVersions.isEmpty ? "尚未安装任何版本" : "空闲"
         }
     }
 
-    // MARK: - 队列数据
-
-    private var visibleTasks: [LauncherDownloadTask] {
-        LauncherDemoData.downloadTasks.filter { !cancelledTaskIDs.contains($0.id) }
+    private var taskBadgeText: String {
+        switch engine.phase {
+        case .downloading: return "下载中"
+        case .preparing: return "准备中"
+        case .failed: return "失败"
+        default: return "空闲"
+        }
     }
 
-    private var pausedCount: Int {
-        visibleTasks.filter { pausedTaskIDs.contains($0.id) }.count
-    }
-
-    private var queueSubtitle: String {
-        if visibleTasks.isEmpty { return "暂无任务" }
-        if pausedCount > 0 { return "\(visibleTasks.count) 个任务 · \(pausedCount) 个已暂停" }
-        return "\(visibleTasks.count) 个任务进行中"
-    }
-
-    private var queueBadgeText: String {
-        if visibleTasks.isEmpty { return "空闲" }
-        return pausedCount > 0 ? "已暂停 \(pausedCount)" : "进行中"
-    }
-
-    private var queueBadgeTone: LauncherBadgeTone {
-        if visibleTasks.isEmpty { return .neutral }
-        return pausedCount > 0 ? .warning : .accent
-    }
-
-    private var queueFooter: String {
-        let values = visibleTasks.compactMap { $0.progress }
-        guard !values.isEmpty else { return "等待任务开始" }
-        let average = Int((values.reduce(0, +) / Double(values.count) * 100).rounded())
-        return "平均进度 \(average)% · 剩余 2 分 12 秒"
-    }
-
-    // MARK: - 磁盘文案
-
-    private var usedSpaceText: String {
-        String(format: "%.1f GB", usedGB)
-    }
-
-    private var availableSpaceText: String {
-        String(format: "%.1f GB", max(0, 99.1 - usedGB))
+    private var taskBadgeTone: LauncherBadgeTone {
+        switch engine.phase {
+        case .downloading: return .accent
+        case .preparing: return .warning
+        case .failed: return .danger
+        default: return .neutral
+        }
     }
 
     // MARK: - 交互
 
-    /// 点击安装：本地演示状态机，每 0.6s 推进 15%，到 100% 变已安装。
-    private func startInstall(_ id: String) {
-        guard let index = versions.firstIndex(where: { $0.id == id }) else { return }
-        withAnimation(LauncherMotion.spring) {
-            versions[index].state = .installing(0)
+    /// 读取版本清单（优先 12 小时磁盘缓存，forceRefresh 时强制联网）。
+    private func loadManifest(forceRefresh: Bool = false) async {
+        isLoadingManifest = true
+        do {
+            let service = MojangManifestService(installation: engine.installation)
+            manifest = try await service.fetchManifest(forceRefresh: forceRefresh)
+            manifestError = nil
+        } catch {
+            manifestError = error.localizedDescription
         }
+        isLoadingManifest = false
+    }
 
+    private func refreshManifest(forceRefresh: Bool) {
         Task { @MainActor in
-            var progress = 0.0
-            while progress < 1 {
-                do {
-                    try await Task.sleep(nanoseconds: 600_000_000)
-                } catch {
-                    return
-                }
-                progress = min(1, progress + 0.15)
-                guard let current = versions.firstIndex(where: { $0.id == id }) else { return }
-                withAnimation(LauncherMotion.smooth) {
-                    versions[current].state = progress >= 1 ? .installed : .installing(progress)
-                }
-            }
+            await loadManifest(forceRefresh: forceRefresh)
         }
     }
 
-    private func togglePause(_ id: String) {
-        withAnimation(LauncherMotion.smooth) {
-            if pausedTaskIDs.contains(id) {
-                pausedTaskIDs.remove(id)
-            } else {
-                pausedTaskIDs.insert(id)
-            }
-        }
-    }
-
-    private func cancel(_ task: LauncherDownloadTask) {
-        withAnimation(LauncherMotion.spring) {
-            cancelledTaskIDs.insert(task.id)
-            pausedTaskIDs.remove(task.id)
-        }
-    }
-
-    private func clearQueue() {
-        withAnimation(LauncherMotion.spring) {
-            for task in visibleTasks {
-                cancelledTaskIDs.insert(task.id)
-            }
-            pausedTaskIDs.removeAll()
-        }
-    }
-
-    private func cleanCache() {
-        guard !isCleaning else { return }
-        isCleaning = true
+    private func refreshAll() {
         Task { @MainActor in
-            do {
-                try await Task.sleep(nanoseconds: 1_200_000_000)
-            } catch {
-                return
-            }
-            withAnimation(LauncherMotion.spring) {
-                usedGB = 13.7
-                didClean = true
-                isCleaning = false
-            }
+            await engine.refreshEnvironment()
+            await loadManifest(forceRefresh: true)
         }
     }
 
-    private func refreshList() {
-        withAnimation(LauncherMotion.spring) {
-            refreshed = true
-        }
+    private func refreshInstalled() {
+        guard !isRefreshingInstalled else { return }
+        isRefreshingInstalled = true
         Task { @MainActor in
-            do {
-                try await Task.sleep(nanoseconds: 1_800_000_000)
-            } catch {
-                return
-            }
-            withAnimation(LauncherMotion.smooth) {
-                refreshed = false
-            }
+            await engine.refreshEnvironment()
+            isRefreshingInstalled = false
         }
     }
 
-    private func openFolder() {
-        withAnimation(LauncherMotion.spring) {
-            folderOpened = true
-        }
+    /// 调用真实安装：进度由 engine.phase 驱动，安装完成后 engine 会自动刷新已安装列表。
+    private func install(_ versionID: String) {
+        guard !engine.isBusy else { return }
+        lastInstallID = versionID
         Task { @MainActor in
-            do {
-                try await Task.sleep(nanoseconds: 1_800_000_000)
-            } catch {
-                return
-            }
-            withAnimation(LauncherMotion.smooth) {
-                folderOpened = false
-            }
+            await engine.install(versionID: versionID)
+        }
+    }
+
+    private func resetFilters() {
+        withAnimation(LauncherMotion.spring) {
+            searchText = ""
+            typeFilter = .all
         }
     }
 
@@ -714,66 +732,84 @@ public struct DownloadPage: View {
             importHint = "演示：把 .zip 整合包拖入窗口，或从模组站一键导入"
         }
         Task { @MainActor in
-            do {
-                try await Task.sleep(nanoseconds: 2_600_000_000)
-            } catch {
-                return
-            }
+            try? await Task.sleep(nanoseconds: 2_600_000_000)
             withAnimation(LauncherMotion.smooth) {
                 importHint = nil
             }
         }
     }
 
-    private func resetFilters() {
+    /// 整合包安装演示：不触发真实下载，仅做行内进度反馈。
+    private func startModpackDemoInstall(_ id: String) {
+        guard let index = modpacks.firstIndex(where: { $0.id == id }) else { return }
         withAnimation(LauncherMotion.spring) {
-            searchText = ""
-            filter = .all
-        }
-        withAnimation(LauncherMotion.smooth) {
-            filterHint = "筛选已重置"
+            modpacks[index].state = .installing(0)
         }
         Task { @MainActor in
-            do {
-                try await Task.sleep(nanoseconds: 2_600_000_000)
-            } catch {
-                return
-            }
-            withAnimation(LauncherMotion.smooth) {
-                filterHint = nil
+            var progress = 0.0
+            while progress < 1 {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                progress = min(1, progress + 0.15)
+                guard let current = modpacks.firstIndex(where: { $0.id == id }) else { return }
+                withAnimation(LauncherMotion.smooth) {
+                    modpacks[current].state = progress >= 1 ? .installed : .installing(progress)
+                }
             }
         }
+    }
+
+    /// 读取与 `MojangManifestService` 相同位置的清单缓存，用于首帧快速展示。
+    private static func readCachedManifest() -> VersionManifest? {
+        let installation = MinecraftInstallation(root: LauncherSettings.shared.resolvedGameDirectory)
+        let service = MojangManifestService(installation: installation)
+        let cacheURL = service.cacheDirectory.appendingPathComponent("version_manifest_v2.json")
+        guard let data = try? Data(contentsOf: cacheURL) else { return nil }
+        return try? JSONDecoder().decode(VersionManifest.self, from: data)
     }
 }
 
 // MARK: - 页面内选项枚举
 
-/// 版本库筛选（全部 / 正式版 / 快照 / 加载器）；整合包单独成区。
-private enum VersionFilter: String, CaseIterable, Identifiable {
+/// 版本类型筛选：全部 / 正式版 / 快照 / 远古版本。
+private enum VersionTypeFilter: String, CaseIterable, Identifiable {
     case all = "全部"
     case release = "正式版"
     case snapshot = "快照"
-    case loader = "加载器"
+    case legacy = "远古版"
 
     var id: String { rawValue }
 
-    func matches(_ kind: LauncherVersionItem.Kind) -> Bool {
-        self == .all || rawValue == kind.rawValue
+    func matches(_ type: String) -> Bool {
+        switch self {
+        case .all: return true
+        case .release: return type == "release"
+        case .snapshot: return type == "snapshot"
+        case .legacy: return type.hasPrefix("old_")
+        }
     }
 }
 
 /// 版本列表排序方式。
-private enum SortMode: String, CaseIterable, Hashable {
+private enum VersionSort: String, CaseIterable, Hashable {
     case newest = "按发布时间"
     case version = "按版本号"
-    case size = "按大小"
+    case installedFirst = "已安装优先"
 }
 
-// MARK: - 页面内演示数据（不改动 LauncherDemoData）
+// MARK: - 页面内演示数据（整合包，后端暂不支持）
 
-/// 额外两条整合包演示数据，与现有 Better MC 一起构成整合包分区。
+/// 整合包演示数据：真实后端只处理 Mojang 官方版本，整合包安装仅做 UI 演示。
 private enum DemoModpacks {
     static let items: [LauncherVersionItem] = [
+        LauncherVersionItem(
+            id: "modpack-bettermc",
+            version: "Better MC · 群岛",
+            kind: .modpack,
+            released: "2026-09-18",
+            size: "2.4 GB",
+            note: "轻量生存整合包 · 128 个模组",
+            state: .installing(0.42)
+        ),
         LauncherVersionItem(
             id: "modpack-atm10",
             version: "All the Mods 10",

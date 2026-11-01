@@ -5,7 +5,7 @@ import LauncherUI
 /// 启动器主界面截图导出：2 套主题 × 4 个导航页。
 @MainActor
 enum AppSnapshotExporter {
-    static func run(outputDir: String) -> Int32 {
+    static func run(outputDir: String) async -> Int32 {
         let directory = URL(fileURLWithPath: outputDir, isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
@@ -13,6 +13,9 @@ enum AppSnapshotExporter {
         let defaults = UserDefaults(suiteName: suite) ?? .standard
         defaults.removePersistentDomain(forName: suite)
         let manager = LauncherThemeManager(presets: LauncherThemes.all, defaults: defaults)
+
+        let engine = LauncherEngine(settings: LauncherSettings(defaults: defaults))
+        await engine.refreshEnvironment()
 
         var failures = 0
         var exported = 0
@@ -28,6 +31,7 @@ enum AppSnapshotExporter {
             for tab in LauncherTab.allCases {
               for size in sizes {
                 let view = LauncherAppShell(initialTab: tab)
+                    .environment(engine)
                     .launcherThemeEnvironment(manager)
                     .environment(\.colorScheme, theme.scheme)
                     .environment(\.launcherSnapshotMode, true)
