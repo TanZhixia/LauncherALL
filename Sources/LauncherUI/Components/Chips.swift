@@ -189,7 +189,6 @@ public struct LauncherStatusDot: View {
             Circle()
                 .fill(tone.color(in: theme))
                 .frame(width: launcherStatusDotSize, height: launcherStatusDotSize)
-                .shadow(color: tone.color(in: theme).opacity(0.45), radius: LauncherSpace.xxs, x: 0, y: 0)
         }
         .frame(width: launcherStatusDotSize, height: launcherStatusDotSize)
         .onAppear(perform: startPulseIfNeeded)

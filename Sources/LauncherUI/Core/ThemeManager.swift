@@ -14,9 +14,9 @@ public final class LauncherThemeManager {
         didSet { defaults.set(themeID, forKey: Keys.themeID) }
     }
 
-    /// 全局玻璃浓度倍数（0.4 - 1.6），让主题质感可微调
-    public var glassIntensity: Double {
-        didSet { defaults.set(glassIntensity, forKey: Keys.glassIntensity) }
+    /// 全局边框强度倍数（0.4 - 1.6）：平面化风格下用它调节面板/分割线的可见度
+    public var borderStrength: Double {
+        didSet { defaults.set(borderStrength, forKey: Keys.borderStrength) }
     }
 
     /// 全局圆角倍数（0.6 - 1.4）
@@ -28,7 +28,7 @@ public final class LauncherThemeManager {
 
     private enum Keys {
         static let themeID = "launcher.themeID"
-        static let glassIntensity = "launcher.glassIntensity"
+        static let borderStrength = "launcher.borderStrength"
         static let cornerScale = "launcher.cornerScale"
     }
 
@@ -37,8 +37,8 @@ public final class LauncherThemeManager {
         self.defaults = defaults
         let storedID = defaults.string(forKey: Keys.themeID) ?? LauncherThemes.default.id
         self.themeID = presets.contains(where: { $0.id == storedID }) ? storedID : LauncherThemes.default.id
-        let storedGlass = defaults.object(forKey: Keys.glassIntensity) as? Double
-        self.glassIntensity = storedGlass ?? 1.0
+        let storedBorder = defaults.object(forKey: Keys.borderStrength) as? Double
+        self.borderStrength = storedBorder ?? 1.0
         let storedCorners = defaults.object(forKey: Keys.cornerScale) as? Double
         self.cornerScale = storedCorners ?? 1.0
     }
@@ -46,10 +46,16 @@ public final class LauncherThemeManager {
     /// 当前主题（已叠加全局微调）
     public var theme: LauncherTheme {
         var base = presets.first { $0.id == themeID } ?? LauncherThemes.default
-        let g = max(0.4, min(1.6, glassIntensity))
-        base.glass.tintOpacity *= g
-        base.glass.highlightOpacity *= g
-        base.colors.surface = base.colors.surface.opacity(min(1, g))
+        let g = max(0.4, min(1.6, borderStrength))
+        if g >= 1 {
+            let t = (g - 1) / 0.6 * 0.35
+            base.colors.stroke = base.colors.stroke.mixed(with: base.colors.textPrimary, amount: t)
+            base.colors.strokeStrong = base.colors.strokeStrong.mixed(with: base.colors.textPrimary, amount: t * 0.8)
+        } else {
+            let t = (1 - g) / 0.6 * 0.8
+            base.colors.stroke = base.colors.stroke.mixed(with: base.colors.surface, amount: t)
+            base.colors.strokeStrong = base.colors.strokeStrong.mixed(with: base.colors.surface, amount: t * 0.8)
+        }
         return base
     }
 
@@ -87,8 +93,8 @@ public extension EnvironmentValues {
         set { self[LauncherThemeKey.self] = newValue }
     }
 
-    /// 离屏渲染模式：Material 与 ScrollView 在 ImageRenderer 下不可用，
-    /// 打开后用主题令牌模拟玻璃底、用普通容器替代滚动视图（布局尺寸不变）。
+    /// 离屏渲染模式：ImageRenderer 无法渲染 AppKit 背书的控件（TextField/Menu）与 ScrollView，
+    /// 打开后组件改用同布局的静态等价物（布局尺寸不变），用于导出验收截图。
     var launcherSnapshotMode: Bool {
         get { self[LauncherSnapshotModeKey.self] }
         set { self[LauncherSnapshotModeKey.self] = newValue }

@@ -10,11 +10,11 @@ public struct ThemeStudioPage: View {
     public var body: some View {
         LauncherPageScaffold(
             title: "主题工作台",
-            subtitle: "一套语义令牌驱动 6 套主题：换主题不换结构，控件在深浅底上保持同一套层级、节奏与对比度"
+            subtitle: "一套语义令牌驱动一深一浅两套主题：换主题只换色，不换结构、不换间距，控件始终保持同一套层级与对比度"
         ) {
-            LauncherSection("主题预设", subtitle: "点击切换 · 全局玻璃材质、语义色与氛围光同步过渡") {
+            LauncherSection("主题预设", subtitle: "点击切换 · 全局语义色、面板层级与边框同步切换") {
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 258), spacing: LauncherSpace.md, alignment: .topLeading)],
+                    columns: [GridItem(.adaptive(minimum: 420), spacing: LauncherSpace.md, alignment: .topLeading)],
                     alignment: .leading,
                     spacing: LauncherSpace.md
                 ) {
@@ -28,9 +28,9 @@ public struct ThemeStudioPage: View {
                 }
             }
 
-            LauncherSection("跨主题一致性", subtitle: "完全相同的组件代码，分别在 6 套主题下渲染——这是本模板的核心验收项") {
+            LauncherSection("跨主题一致性", subtitle: "完全相同的组件代码，分别在深色 / 浅色主题下渲染——这是本模板的核心验收项") {
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 300), spacing: LauncherSpace.md, alignment: .topLeading)],
+                    columns: [GridItem(.adaptive(minimum: 420), spacing: LauncherSpace.md, alignment: .topLeading)],
                     alignment: .leading,
                     spacing: LauncherSpace.md
                 ) {
@@ -40,18 +40,19 @@ public struct ThemeStudioPage: View {
                 }
             }
 
-            LauncherSection("全局外观参数", subtitle: "乘数作用于所有组件，验证令牌系统是否真正贯通") {
+            LauncherSection("全局外观参数", subtitle: "两个乘数作用于所有组件，验证令牌系统是否真正贯通") {
                 GlassPanel(level: .regular, cornerRadius: LauncherRadius.lg, padding: LauncherSpace.lg) {
                     VStack(spacing: LauncherSpace.md) {
                         LauncherSlider(
                             value: Binding(
-                                get: { themeManager.glassIntensity },
-                                set: { themeManager.glassIntensity = $0 }
+                                get: { themeManager.borderStrength },
+                                set: { themeManager.borderStrength = $0 }
                             ),
                             range: 0.4...1.6,
-                            label: "玻璃浓度",
-                            valueText: String(format: "%.2f×", themeManager.glassIntensity)
+                            label: "边框强度",
+                            valueText: String(format: "%.2f×", themeManager.borderStrength)
                         )
+                        .frame(maxWidth: 560, alignment: .leading)
                         LauncherSlider(
                             value: Binding(
                                 get: { themeManager.cornerScale },
@@ -61,13 +62,14 @@ public struct ThemeStudioPage: View {
                             label: "圆角缩放",
                             valueText: String(format: "%.2f×", themeManager.cornerScale)
                         )
+                        .frame(maxWidth: 560, alignment: .leading)
                         HStack(spacing: LauncherSpace.sm) {
                             Text("当前主题：\(theme.name) · \(theme.tagline)")
                                 .textStyle(.micro, tone: .tertiary)
                             Spacer(minLength: LauncherSpace.sm)
                             LauncherButton("恢复默认", variant: .secondary, size: .small) {
                                 withAnimation(LauncherMotion.spring) {
-                                    themeManager.glassIntensity = 1.0
+                                    themeManager.borderStrength = 1.0
                                     themeManager.cornerScale = 1.0
                                 }
                             }
@@ -76,7 +78,7 @@ public struct ThemeStudioPage: View {
                 }
             }
 
-            LauncherSection("设计令牌", subtitle: "颜色 / 圆角 / 间距 / 字阶——组件只能消费这些令牌") {
+            LauncherSection("设计令牌", subtitle: "中性色阶 / 圆角 / 间距 / 字阶——组件只能消费这些令牌") {
                 GlassPanel(level: .regular, cornerRadius: LauncherRadius.lg, padding: LauncherSpace.lg) {
                     VStack(alignment: .leading, spacing: LauncherSpace.xl) {
                         colorTokenGrid
@@ -204,7 +206,6 @@ public struct ThemeStudioPage: View {
 // MARK: - 主题卡片
 
 private struct ThemeCard: View {
-    @Environment(\.launcherTheme) private var theme
     let preset: LauncherTheme
     let isSelected: Bool
     let action: () -> Void
@@ -216,79 +217,129 @@ private struct ThemeCard: View {
                 HStack(alignment: .center, spacing: LauncherSpace.sm) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(preset.name)
-                            .textStyle(.bodyStrong)
+                            .font(LauncherTextStyle.bodyStrong.font)
+                            .foregroundStyle(preset.colors.textPrimary)
                         Text(preset.tagline)
-                            .textStyle(.micro, tone: .tertiary)
+                            .font(LauncherTextStyle.micro.font)
+                            .foregroundStyle(preset.colors.textTertiary)
                     }
                     Spacer(minLength: 0)
                     if isSelected {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(theme.colors.accent)
+                            .foregroundStyle(preset.colors.accent)
                     }
                 }
                 .padding(.horizontal, LauncherSpace.md)
                 .padding(.vertical, LauncherSpace.sm)
             }
-            .background { LauncherGlassBackground(level: isSelected ? .strong : .regular, cornerRadius: LauncherRadius.lg) }
-            .overlay {
-                RoundedRectangle(cornerRadius: LauncherRadius.lg, style: .continuous)
-                    .strokeBorder(isSelected ? theme.colors.accent : .clear, lineWidth: 1.5)
+            .background {
+                UnevenRoundedRectangle(
+                    topLeadingRadius: LauncherRadius.lg,
+                    bottomLeadingRadius: LauncherRadius.lg,
+                    bottomTrailingRadius: LauncherRadius.lg,
+                    topTrailingRadius: LauncherRadius.lg,
+                    style: .continuous
+                )
+                .fill(preset.colors.surface)
             }
             .clipShape(RoundedRectangle(cornerRadius: LauncherRadius.lg, style: .continuous))
         }
         .buttonStyle(.plain)
+        .overlay {
+            RoundedRectangle(cornerRadius: LauncherRadius.lg, style: .continuous)
+                .strokeBorder(
+                    isSelected ? preset.colors.accent : preset.colors.stroke,
+                    lineWidth: isSelected ? 1.5 : 1
+                )
+        }
         .launcherHoverEffect(scale: 1.01)
         .accessibilityLabel("主题 \(preset.name)")
     }
 
     private var preview: some View {
-        ZStack(alignment: .topLeading) {
-            LinearGradient(colors: preset.ambient.gradient, startPoint: .top, endPoint: .bottom)
+        ZStack {
+            preset.colors.canvas
 
-            RadialGradient(
-                colors: [preset.ambient.glowPrimary.opacity(0.5), .clear],
-                center: UnitPoint(x: 0.05, y: 0.0),
-                startRadius: 0,
-                endRadius: 150
-            )
-
-            HStack(spacing: 6) {
-                // 迷你侧栏
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(preset.colors.surfaceElevated)
-                    .frame(width: 22)
-                VStack(alignment: .leading, spacing: 5) {
-                    // 迷你卡片
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(preset.colors.surface)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(preset.colors.stroke, lineWidth: 1)
-                        )
-                        .frame(height: 34)
-                        .overlay(alignment: .leading) {
-                            HStack(spacing: 4) {
-                                Circle().fill(preset.colors.accent).frame(width: 6, height: 6)
-                                RoundedRectangle(cornerRadius: 2).fill(preset.colors.textSecondary.opacity(0.5)).frame(width: 42, height: 4)
-                            }
-                            .padding(.leading, 7)
-                        }
-                    HStack(spacing: 5) {
+            HStack(spacing: LauncherSpace.sm) {
+                miniSidebar
+                VStack(alignment: .leading, spacing: LauncherSpace.xs) {
+                    HStack(spacing: LauncherSpace.xs) {
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(preset.colors.textPrimary.opacity(0.55))
+                            .frame(width: 46, height: 4)
+                        Spacer(minLength: 0)
+                        Circle()
+                            .fill(preset.colors.accent)
+                            .frame(width: 4, height: 4)
+                    }
+                    miniCard
+                    HStack(spacing: LauncherSpace.xs) {
                         RoundedRectangle(cornerRadius: 3, style: .continuous)
-                            .fill(LinearGradient(colors: [preset.colors.accent, preset.colors.accentAlt], startPoint: .leading, endPoint: .trailing))
-                            .frame(width: 52, height: 14)
+                            .fill(preset.colors.accent)
+                            .frame(width: 44, height: 12)
                         RoundedRectangle(cornerRadius: 3, style: .continuous)
                             .fill(preset.colors.surfaceHover)
-                            .frame(width: 30, height: 14)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                                    .strokeBorder(preset.colors.stroke, lineWidth: 1)
+                            )
+                            .frame(width: 26, height: 12)
+                        Spacer(minLength: 0)
                     }
                 }
-                .frame(maxHeight: .infinity, alignment: .top)
+                .padding(.vertical, LauncherSpace.sm)
+                .padding(.trailing, LauncherSpace.sm)
             }
-            .padding(8)
         }
-        .frame(height: 82)
+        .frame(height: 104)
         .clipped()
+    }
+
+    /// 迷你侧栏：亮色主题也能靠 1px 边框与选中条看出结构。
+    private var miniSidebar: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(0..<4, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(index == 0 ? preset.colors.accent : preset.colors.textTertiary.opacity(0.4))
+                    .frame(width: index == 0 ? 14 : 10, height: 3)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.top, LauncherSpace.md)
+        .padding(.leading, 6)
+        .frame(width: 28)
+        .frame(maxHeight: .infinity)
+        .background(preset.colors.surfaceElevated)
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(preset.colors.stroke).frame(width: 1)
+        }
+    }
+
+    /// 迷你卡片：底色 + 1px 边框 + 一行标题与状态点。
+    private var miniCard: some View {
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(preset.colors.surface)
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .strokeBorder(preset.colors.stroke, lineWidth: 1)
+            )
+            .frame(height: 34)
+            .overlay(alignment: .leading) {
+                HStack(spacing: LauncherSpace.xs) {
+                    Circle()
+                        .fill(preset.colors.accent)
+                        .frame(width: 5, height: 5)
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(preset.colors.textSecondary.opacity(0.55))
+                        .frame(width: 38, height: 3)
+                    Spacer(minLength: 0)
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(preset.colors.textTertiary.opacity(0.35))
+                        .frame(width: 18, height: 3)
+                }
+                .padding(.horizontal, 7)
+            }
     }
 }
 
@@ -302,7 +353,7 @@ private struct CrossThemeCard: View {
         VStack(alignment: .leading, spacing: LauncherSpace.sm) {
             HStack(spacing: LauncherSpace.xs) {
                 Circle()
-                    .fill(LinearGradient(colors: preset.swatch, startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .fill(preset.swatch.last ?? preset.colors.accent)
                     .frame(width: 8, height: 8)
                 Text(preset.name)
                     .textStyle(.micro, tone: .secondary)
@@ -331,17 +382,7 @@ private struct CrossThemeCard: View {
             }
         }
         .padding(LauncherSpace.md)
-        .background {
-            ZStack {
-                LinearGradient(colors: preset.ambient.gradient, startPoint: .topLeading, endPoint: .bottomTrailing)
-                RadialGradient(
-                    colors: [preset.ambient.glowPrimary.opacity(preset.isDark ? 0.3 : 0.18), .clear],
-                    center: UnitPoint(x: 0.1, y: 0.0),
-                    startRadius: 0,
-                    endRadius: 260
-                )
-            }
-        }
+        .background(preset.colors.canvas)
         .clipShape(RoundedRectangle(cornerRadius: LauncherRadius.lg, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: LauncherRadius.lg, style: .continuous)

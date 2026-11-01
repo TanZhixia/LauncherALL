@@ -1,13 +1,13 @@
 import SwiftUI
 
-/// 容器与信息展示画廊页：三层玻璃、列表行、区块标题、空态、头像、键值对与统计块。
+/// 容器与信息展示画廊页：三层面板、列表行、区块标题、空态、头像、键值对与统计块。
 public struct SurfacesPage: View {
     public init() {}
 
     public var body: some View {
         LauncherPageScaffold(
             title: "容器与列表",
-            subtitle: "玻璃层级、列表行、空态与基础信息组件，深浅主题下保持同一套结构与节奏"
+            subtitle: "面板层级、列表行、空态与基础信息组件，深浅主题下保持同一套结构与节奏"
         ) {
             glassSection
             listRowSection
@@ -18,12 +18,12 @@ public struct SurfacesPage: View {
         }
     }
 
-    // MARK: - 玻璃层级
+    // MARK: - 面板层级
 
     private var glassSection: some View {
         LauncherSection(
-            "玻璃层级",
-            subtitle: "subtle 内嵌 / regular 常规 / strong 浮层，越强越实、阴影越重"
+            "面板层级",
+            subtitle: "subtle 内嵌 / regular 常规 / strong 浮层，越强越实、边框越明显"
         ) {
             HStack(alignment: .top, spacing: LauncherSpace.md) {
                 glassSample(

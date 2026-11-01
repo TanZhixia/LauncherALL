@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 // MARK: - 基础工具
 
@@ -9,6 +10,20 @@ public extension Color {
         let g = Double((hex >> 8) & 0xFF) / 255
         let b = Double(hex & 0xFF) / 255
         self.init(.sRGB, red: r, green: g, blue: b, opacity: opacity)
+    }
+
+    /// 与另一颜色按比例混合：用于从少量基色推导 hover / active / soft 态，保证多主题一致。
+    func mixed(with other: Color, amount: Double) -> Color {
+        let a = NSColor(self).usingColorSpace(.sRGB) ?? NSColor.black
+        let b = NSColor(other).usingColorSpace(.sRGB) ?? NSColor.black
+        let t = max(0, min(1, amount))
+        return Color(
+            .sRGB,
+            red: a.redComponent + (b.redComponent - a.redComponent) * t,
+            green: a.greenComponent + (b.greenComponent - a.greenComponent) * t,
+            blue: a.blueComponent + (b.blueComponent - a.blueComponent) * t,
+            opacity: a.alphaComponent + (b.alphaComponent - a.alphaComponent) * t
+        )
     }
 }
 
@@ -26,11 +41,11 @@ public enum LauncherSpace {
 
 /// 圆角刻度。
 public enum LauncherRadius {
-    public static let sm: CGFloat = 8
-    public static let md: CGFloat = 12
-    public static let lg: CGFloat = 16
-    public static let xl: CGFloat = 22
-    public static let xxl: CGFloat = 28
+    public static let sm: CGFloat = 6
+    public static let md: CGFloat = 10
+    public static let lg: CGFloat = 14
+    public static let xl: CGFloat = 18
+    public static let xxl: CGFloat = 24
     public static let pill: CGFloat = 999
 }
 
@@ -42,93 +57,61 @@ public enum LauncherControl {
     public static let icon: CGFloat = 34
 }
 
-/// 动效刻度。
+/// 动效刻度：平面化后只保留状态切换的短促过渡。
 public enum LauncherMotion {
-    public static let fast: Double = 0.12
-    public static let base: Double = 0.2
-    public static let slow: Double = 0.32
-    public static var spring: Animation { .spring(response: 0.34, dampingFraction: 0.82) }
+    public static let fast: Double = 0.10
+    public static let base: Double = 0.16
+    public static let slow: Double = 0.24
+    public static var spring: Animation { .easeOut(duration: base) }
     public static var smooth: Animation { .easeInOut(duration: base) }
 }
 
-/// 玻璃材质等级（不直接暴露 Material，保证主题可比较/可持久化）。
-public enum LauncherMaterial: String, CaseIterable, Equatable {
-    case ultraThin, thin, regular, thick
-
-    public var material: Material {
-        switch self {
-        case .ultraThin: return .ultraThinMaterial
-        case .thin: return .thinMaterial
-        case .regular: return .regularMaterial
-        case .thick: return .thickMaterial
-        }
-    }
-}
-
-/// 玻璃面板层级：subtle 内嵌、regular 常规卡片、strong 浮层/弹窗。
+/// 面板层级：平面化风格下，层级只由「底色 + 1px 边框」表达，不使用模糊/投影/发光。
 public enum GlassLevel: String, CaseIterable {
-    case subtle, regular, strong
-
-    public var tintMultiplier: Double {
-        switch self {
-        case .subtle: return 0.5
-        case .regular: return 1.0
-        case .strong: return 1.55
-        }
-    }
-
-    public var strokeMultiplier: Double {
-        switch self {
-        case .subtle: return 0.6
-        case .regular: return 1.0
-        case .strong: return 1.4
-        }
-    }
-
-    public var shadowMultiplier: Double {
-        switch self {
-        case .subtle: return 0.2
-        case .regular: return 1.0
-        case .strong: return 1.6
-        }
-    }
+    /// 内嵌：输入框容器、列表底、代码块（比页面底色再深/浅一档）
+    case subtle
+    /// 常规面板：卡片、分组
+    case regular
+    /// 浮层：侧栏、弹窗、Toast
+    case strong
 }
 
 // MARK: - 语义色令牌
 
-/// 一套主题的全部语义色，组件不得直接使用十六进制色值。
+/// 一套主题的全部语义色。组件不得直接使用十六进制色值。
 public struct LauncherColors: Equatable {
-    /// 窗口/画布底色（不透明，材质之下的兜底色）
+    /// 页面底色
     public var canvas: Color
-    /// 玻璃面板填充色（已烘焙透明度）
+    /// 常规面板底
     public var surface: Color
-    /// 更实一层的表面（浮层/侧栏）
+    /// 浮层底（侧栏、弹窗）
     public var surfaceElevated: Color
-    /// 内嵌凹槽（输入框、轨道、代码块）
+    /// 内嵌凹槽底（输入框、进度轨、segmented 容器）
     public var surfaceSubtle: Color
-    /// hover 态表面
+    /// hover 态
     public var surfaceHover: Color
-    /// pressed / 选中态表面
+    /// pressed / 选中态
     public var surfaceActive: Color
     /// 1px 细描边
     public var stroke: Color
-    /// 强调描边（hover、分割线、选中边框）
+    /// 强调描边（选中、hover 边界）
     public var strokeStrong: Color
     public var textPrimary: Color
     public var textSecondary: Color
     public var textTertiary: Color
+    /// 唯一强调色：按钮、选中、焦点，全站只允许这一处彩色（默认中性高对比）
     public var accent: Color
+    /// 强调色的次级表现（平面化后与 accent 同色，保留令牌位）
     public var accentAlt: Color
-    /// 强调色底上的前景色
+    /// 强调底上的前景色
     public var onAccent: Color
-    /// 强调色的柔和底（选中行背景）
+    /// 强调色的极淡底（选中行背景）
     public var accentSoft: Color
     public var success: Color
     public var warning: Color
     public var danger: Color
     public var onDanger: Color
     public var focusRing: Color
-    public var shadow: Color
 
     public init(
         canvas: Color,
@@ -150,8 +133,7 @@ public struct LauncherColors: Equatable {
         warning: Color,
         danger: Color,
         onDanger: Color,
-        focusRing: Color,
-        shadow: Color
+        focusRing: Color
     ) {
         self.canvas = canvas
         self.surface = surface
@@ -173,34 +155,7 @@ public struct LauncherColors: Equatable {
         self.danger = danger
         self.onDanger = onDanger
         self.focusRing = focusRing
-        self.shadow = shadow
     }
-}
-
-// MARK: - 玻璃 & 氛围令牌
-
-public struct LauncherGlass: Equatable {
-    public var material: LauncherMaterial
-    /// 玻璃本身的着色倾向（深色主题用白，浅色主题用白/黑混合）
-    public var tint: Color
-    public var tintOpacity: Double
-    /// 顶部高光强度（0 = 不画高光）
-    public var highlightOpacity: Double
-    public var shadowRadius: CGFloat
-    public var shadowY: CGFloat
-}
-
-public struct LauncherAmbient: Equatable {
-    /// 背景主渐变（自上而下）
-    public var gradient: [Color]
-    /// 左上氛围光
-    public var glowPrimary: Color
-    /// 右下氛围光
-    public var glowSecondary: Color
-    /// 像素网格透明度（Minecraft 的方块暗示，0 = 关闭）
-    public var gridOpacity: Double
-    /// 暗角强度
-    public var vignetteOpacity: Double
 }
 
 // MARK: - 主题
@@ -211,16 +166,10 @@ public struct LauncherTheme: Identifiable, Equatable {
     public var tagline: String
     public var scheme: ColorScheme
     public var colors: LauncherColors
-    public var glass: LauncherGlass
-    public var ambient: LauncherAmbient
-    /// 主题卡片用的三色色板
+    /// 主题卡片用的色板（底色 / 面板 / 强调）
     public var swatch: [Color]
 
     public var isDark: Bool { scheme == .dark }
-
-    public var primaryGradient: LinearGradient {
-        LinearGradient(colors: [colors.accent, colors.accentAlt], startPoint: .topLeading, endPoint: .bottomTrailing)
-    }
 
     public init(
         id: String,
@@ -228,8 +177,6 @@ public struct LauncherTheme: Identifiable, Equatable {
         tagline: String,
         scheme: ColorScheme,
         colors: LauncherColors,
-        glass: LauncherGlass,
-        ambient: LauncherAmbient,
         swatch: [Color]
     ) {
         self.id = id
@@ -237,8 +184,6 @@ public struct LauncherTheme: Identifiable, Equatable {
         self.tagline = tagline
         self.scheme = scheme
         self.colors = colors
-        self.glass = glass
-        self.ambient = ambient
         self.swatch = swatch
     }
 }
@@ -246,133 +191,101 @@ public struct LauncherTheme: Identifiable, Equatable {
 // MARK: - 主题工厂
 
 public extension LauncherTheme {
-    /// 深色主题工厂：统一推导 surface / stroke / 阴影，保证多主题视觉一致。
+    /// 深色主题：中性色骨架 + 单一高对比强调色（默认近白），hover/选中态由基色自动推导。
     static func dark(
         id: String,
         name: String,
         tagline: String,
-        backdrop: [Color],
-        glowPrimary: Color,
-        glowSecondary: Color,
-        accent: Color,
-        accentAlt: Color,
-        onAccent: Color,
+        canvas: Color,
+        surface: Color,
+        surfaceElevated: Color,
+        surfaceSubtle: Color,
+        stroke: Color,
+        strokeStrong: Color,
         textPrimary: Color,
         textSecondary: Color,
         textTertiary: Color,
-        success: Color = Color(hex: 0x4ADE80),
-        warning: Color = Color(hex: 0xFBBF24),
-        danger: Color = Color(hex: 0xF87171),
-        glassMaterial: LauncherMaterial = .regular,
-        gridOpacity: Double = 0.045
+        accent: Color,
+        onAccent: Color,
+        success: Color = Color(hex: 0x3FB950),
+        warning: Color = Color(hex: 0xD29922),
+        danger: Color = Color(hex: 0xF85149)
     ) -> LauncherTheme {
         let colors = LauncherColors(
-            canvas: backdrop.first ?? Color(hex: 0x0B1210),
-            surface: Color.white.opacity(0.065),
-            surfaceElevated: Color.white.opacity(0.1),
-            surfaceSubtle: Color.black.opacity(0.22),
-            surfaceHover: Color.white.opacity(0.1),
-            surfaceActive: Color.white.opacity(0.14),
-            stroke: Color.white.opacity(0.1),
-            strokeStrong: Color.white.opacity(0.2),
+            canvas: canvas,
+            surface: surface,
+            surfaceElevated: surfaceElevated,
+            surfaceSubtle: surfaceSubtle,
+            surfaceHover: surface.mixed(with: .white, amount: 0.06),
+            surfaceActive: surface.mixed(with: .white, amount: 0.12),
+            stroke: stroke,
+            strokeStrong: strokeStrong,
             textPrimary: textPrimary,
             textSecondary: textSecondary,
             textTertiary: textTertiary,
             accent: accent,
-            accentAlt: accentAlt,
+            accentAlt: accent,
             onAccent: onAccent,
-            accentSoft: accent.opacity(0.16),
+            accentSoft: accent.mixed(with: canvas, amount: 0.88),
             success: success,
             warning: warning,
             danger: danger,
-            onDanger: Color(hex: 0x2A0A0A),
-            focusRing: accent.opacity(0.85),
-            shadow: Color.black.opacity(0.45)
-        )
-        let glass = LauncherGlass(
-            material: glassMaterial,
-            tint: Color.white,
-            tintOpacity: 0.05,
-            highlightOpacity: 0.16,
-            shadowRadius: 22,
-            shadowY: 12
-        )
-        let ambient = LauncherAmbient(
-            gradient: backdrop,
-            glowPrimary: glowPrimary,
-            glowSecondary: glowSecondary,
-            gridOpacity: gridOpacity,
-            vignetteOpacity: 0.5
+            onDanger: canvas,
+            focusRing: accent
         )
         return LauncherTheme(
             id: id, name: name, tagline: tagline, scheme: .dark,
-            colors: colors, glass: glass, ambient: ambient,
-            swatch: [backdrop.last ?? .black, accent, accentAlt]
+            colors: colors,
+            swatch: [canvas, surfaceElevated, accent]
         )
     }
 
-    /// 浅色主题工厂。
+    /// 浅色主题。
     static func light(
         id: String,
         name: String,
         tagline: String,
-        backdrop: [Color],
-        glowPrimary: Color,
-        glowSecondary: Color,
-        accent: Color,
-        accentAlt: Color,
-        onAccent: Color = .white,
+        canvas: Color,
+        surface: Color,
+        surfaceElevated: Color,
+        surfaceSubtle: Color,
+        stroke: Color,
+        strokeStrong: Color,
         textPrimary: Color,
         textSecondary: Color,
         textTertiary: Color,
-        success: Color = Color(hex: 0x059669),
-        warning: Color = Color(hex: 0xB45309),
-        danger: Color = Color(hex: 0xDC2626),
-        glassMaterial: LauncherMaterial = .regular,
-        gridOpacity: Double = 0.03
+        accent: Color,
+        onAccent: Color,
+        success: Color = Color(hex: 0x1A7F37),
+        warning: Color = Color(hex: 0x9A6700),
+        danger: Color = Color(hex: 0xCF222E)
     ) -> LauncherTheme {
         let colors = LauncherColors(
-            canvas: backdrop.first ?? Color(hex: 0xF5F8FF),
-            surface: Color.white.opacity(0.55),
-            surfaceElevated: Color.white.opacity(0.72),
-            surfaceSubtle: Color.black.opacity(0.045),
-            surfaceHover: Color.white.opacity(0.8),
-            surfaceActive: Color.white.opacity(0.9),
-            stroke: Color.black.opacity(0.08),
-            strokeStrong: Color.black.opacity(0.16),
+            canvas: canvas,
+            surface: surface,
+            surfaceElevated: surfaceElevated,
+            surfaceSubtle: surfaceSubtle,
+            surfaceHover: surface.mixed(with: .black, amount: 0.04),
+            surfaceActive: surface.mixed(with: .black, amount: 0.08),
+            stroke: stroke,
+            strokeStrong: strokeStrong,
             textPrimary: textPrimary,
             textSecondary: textSecondary,
             textTertiary: textTertiary,
             accent: accent,
-            accentAlt: accentAlt,
+            accentAlt: accent,
             onAccent: onAccent,
-            accentSoft: accent.opacity(0.12),
+            accentSoft: accent.mixed(with: canvas, amount: 0.92),
             success: success,
             warning: warning,
             danger: danger,
-            onDanger: Color.white,
-            focusRing: accent.opacity(0.8),
-            shadow: Color.black.opacity(0.12)
-        )
-        let glass = LauncherGlass(
-            material: glassMaterial,
-            tint: Color.white,
-            tintOpacity: 0.32,
-            highlightOpacity: 0.6,
-            shadowRadius: 18,
-            shadowY: 10
-        )
-        let ambient = LauncherAmbient(
-            gradient: backdrop,
-            glowPrimary: glowPrimary,
-            glowSecondary: glowSecondary,
-            gridOpacity: gridOpacity,
-            vignetteOpacity: 0.12
+            onDanger: .white,
+            focusRing: accent
         )
         return LauncherTheme(
             id: id, name: name, tagline: tagline, scheme: .light,
-            colors: colors, glass: glass, ambient: ambient,
-            swatch: [accent, accentAlt, backdrop.last ?? .white]
+            colors: colors,
+            swatch: [canvas, surfaceElevated, accent]
         )
     }
 }

@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - 公开类型
 
-/// 按钮视觉变体：primary 用主题渐变承担主操作，secondary / ghost 保持克制，danger 表示破坏性操作。
+/// 按钮视觉变体：primary 用强调色承担主操作，secondary / ghost 保持克制，danger 表示破坏性操作。
 public enum LauncherButtonVariant {
     case primary
     case secondary
@@ -75,7 +75,7 @@ private extension LauncherButtonSize {
 
 // MARK: - 按钮底层
 
-/// 按钮底层：按变体绘制渐变 / 表面 / 描边，并叠加主题色外发光与顶部高光。
+/// 按钮底层：按变体绘制纯色填充 / 表面 / 描边，平面化不做高光与投影。
 private struct LauncherButtonSurface: View {
     @Environment(\.launcherTheme) private var theme
 
@@ -91,19 +91,15 @@ private struct LauncherButtonSurface: View {
         ZStack {
             fill
             border
-            if isPrimary {
-                specularHighlight
-            }
         }
         .compositingGroup()
-        .shadow(color: glowColor, radius: glowRadius, x: 0, y: glowOffsetY)
     }
 
     @ViewBuilder
     private var fill: some View {
         switch variant {
         case .primary:
-            shape.fill(theme.primaryGradient)
+            shape.fill(theme.colors.accent)
                 .brightness(isHovering ? 0.05 : 0)
         case .secondary:
             shape.fill(isHovering ? theme.colors.surfaceHover : theme.colors.surface)
@@ -128,47 +124,6 @@ private struct LauncherButtonSurface: View {
         }
     }
 
-    /// 顶部高光描边：模拟玻璃的物理高光，让 primary 成为整页的视觉锚点。
-    private var specularHighlight: some View {
-        shape.strokeBorder(
-            LinearGradient(
-                colors: [Color.white.opacity(0.42), Color.white.opacity(0.02)],
-                startPoint: .top,
-                endPoint: .center
-            ),
-            lineWidth: 1
-        )
-    }
-
-    private var isPrimary: Bool {
-        if case .primary = variant { return true }
-        return false
-    }
-
-    /// primary 使用契约规定的 accent 外发光（radius 12 / y 6），hover 时略微增强。
-    private var glowColor: Color {
-        switch variant {
-        case .primary: return theme.colors.accent.opacity(isHovering ? 0.4 : 0.28)
-        case .danger: return theme.colors.danger.opacity(isHovering ? 0.3 : 0.2)
-        case .secondary, .ghost: return .clear
-        }
-    }
-
-    private var glowRadius: CGFloat {
-        switch variant {
-        case .primary: return LauncherSpace.md                                   // 12
-        case .danger: return LauncherSpace.md - LauncherSpace.xxs                // 10
-        case .secondary, .ghost: return 0
-        }
-    }
-
-    private var glowOffsetY: CGFloat {
-        switch variant {
-        case .primary: return LauncherSpace.sm - LauncherSpace.xxs                // 6
-        case .danger: return LauncherSpace.xs                                     // 4
-        case .secondary, .ghost: return 0
-        }
-    }
 }
 
 // MARK: - 文字按钮

@@ -97,7 +97,7 @@ public struct LauncherSidebarItem: View {
 
 // MARK: - 侧栏容器
 
-/// 侧栏：玻璃底 + 右侧 1px 分割线，顶部/底部为任意内容槽位（账户、设置等）。
+/// 侧栏：面板底 + 右侧 1px 分割线，顶部/底部为任意内容槽位（账户、设置等）。
 public struct LauncherSidebar: View {
     @Environment(\.launcherTheme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -271,7 +271,7 @@ public struct LauncherTabBar: View {
 
 // MARK: - 对话框
 
-/// 对话框卡片：.strong 玻璃、380pt 宽；遮罩层由页面自行叠加，组件只画卡片本身。
+/// 对话框卡片：.strong 面板、380pt 宽；遮罩层由页面自行叠加，组件只画卡片本身。
 public struct LauncherDialog: View {
     /// 对话框语气：primary 常规，danger 危险操作（主按钮用 danger 变体）。
     public enum Tone {

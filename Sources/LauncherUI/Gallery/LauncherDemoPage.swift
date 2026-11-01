@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 启动器实战样张：用玻璃卡与控件组合出 Minecraft 启动器的真实首屏。
+/// 启动器实战样张：用面板卡与控件组合出 Minecraft 启动器的真实首屏。
 public struct LauncherDemoPage: View {
     @Environment(\.launcherTheme) private var theme
 
@@ -93,7 +93,7 @@ public struct LauncherDemoPage: View {
             VStack(alignment: .leading, spacing: LauncherSpace.md) {
                 HStack(spacing: LauncherSpace.sm) {
                     Capsule()
-                        .fill(theme.primaryGradient)
+                        .fill(theme.colors.accent)
                         .frame(width: LauncherSpace.xs, height: LauncherSpace.lg)
                     LauncherLabel("CURRENT INSTANCE")
                     Spacer(minLength: LauncherSpace.sm)

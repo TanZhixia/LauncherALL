@@ -113,7 +113,7 @@ public struct NavigationPage: View {
     private var dialogSection: some View {
         LauncherSection(
             "对话框",
-            subtitle: "常规确认与危险操作两种语义，均为浮层玻璃卡"
+            subtitle: "常规确认与危险操作两种语义，均为浮层面板卡"
         ) {
             HStack(alignment: .top, spacing: LauncherSpace.md) {
                 LauncherDialog(

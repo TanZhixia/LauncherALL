@@ -150,7 +150,7 @@ public struct SelectionPage: View {
 
     // MARK: - 滑杆
 
-    /// 两个滑杆：玻璃浓度（实时百分比）与视距（区块数）。
+    /// 两个滑杆：边框强度（实时百分比）与视距（区块数）。
     private var sliderSection: some View {
         LauncherSection("滑杆", subtitle: "自绘轨道与拇指；右侧数值用等宽字体，拖动时数字不抖。") {
             GlassPanel(level: .regular, cornerRadius: LauncherRadius.lg, padding: LauncherSpace.xl) {
@@ -158,7 +158,7 @@ public struct SelectionPage: View {
                     LauncherSlider(
                         value: $glassIntensity,
                         range: 0.4...1.6,
-                        label: "玻璃浓度",
+                        label: "边框强度",
                         valueText: "\(Int(glassIntensity * 100))%"
                     )
                     LauncherSlider(

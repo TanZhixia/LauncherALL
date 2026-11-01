@@ -1,5 +1,12 @@
 # LauncherUI 组件 API 契约（v1）
 
+> **v2 变更（平面化改版）**：视觉方向由「毛玻璃 + 6 套彩色主题」改为「简约平面化 + 一深一浅两套中性主题」。
+> - `theme.glass` / `theme.ambient` / `theme.primaryGradient` 已移除；强调色填充一律用 `theme.colors.accent`。
+> - `LauncherThemeManager.glassIntensity` → `borderStrength`（边框强度乘数）。
+> - `LauncherColors.shadow` 已移除；**禁止**再使用 `.shadow()` / `.blur()` / 渐变填充 / 发光。
+> - 主题仅 `graphite`（深色）/ `porcelain`（浅色），工厂方法签名见 `Core/Tokens.swift`。
+> - 其余组件签名与 v1 契约保持一致（`GlassLevel` / `GlassPanel` / `.glassBackground` 名称保留，实现改为纯色 + 1px 边框）。
+
 > 本文件是**唯一事实来源**。所有组件与画廊页必须严格按此签名实现/调用。
 > 工作目录：`/Volumes/Files/Project/LauncherAll`（Swift Package，macOS 15+，SwiftUI）。
 > 产品：**Minecraft 启动器**（多主题 + 毛玻璃）。

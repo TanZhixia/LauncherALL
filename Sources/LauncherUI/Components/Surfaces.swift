@@ -1,14 +1,14 @@
 import SwiftUI
 
-// MARK: - 玻璃卡片
+// MARK: - 面板卡片
 
-/// 玻璃卡片：统一玻璃层级（subtle / regular / strong）、圆角与内边距的内容容器。
+/// 面板卡片：统一面板层级（subtle / regular / strong）、圆角与内边距的内容容器。
 public struct LauncherCard<Content: View>: View {
     private let level: GlassLevel
     private let padding: CGFloat
     private let content: () -> Content
 
-    /// 创建一张玻璃卡片，内容默认左对齐并撑满可用宽度。
+    /// 创建一张面板卡片，内容默认左对齐并撑满可用宽度。
     public init(
         level: GlassLevel = .regular,
         padding: CGFloat = LauncherSpace.lg,
@@ -236,7 +236,7 @@ public struct LauncherSectionHeader: View {
 
 // MARK: - 空状态
 
-/// 空状态：内嵌玻璃底 + 居中图标 + 标题/说明 + 可选主操作。
+/// 空状态：内嵌面板底 + 居中图标 + 标题/说明 + 可选主操作。
 public struct LauncherEmptyState: View {
     @Environment(\.launcherTheme) private var theme
 
@@ -294,7 +294,7 @@ public struct LauncherEmptyState: View {
 
 // MARK: - 头像
 
-/// 头像：圆形低饱和渐变底 + 首字/图标，右下角可选在线状态点。
+/// 头像：圆形低饱和纯色底 + 首字/图标，右下角可选在线状态点。
 public struct LauncherAvatar: View {
     @Environment(\.launcherTheme) private var theme
 
@@ -317,7 +317,7 @@ public struct LauncherAvatar: View {
                 .fill(theme.colors.surfaceElevated)
                 .overlay(
                     Circle()
-                        .fill(theme.primaryGradient)
+                        .fill(theme.colors.accent)
                         .opacity(0.38)
                 )
                 .overlay(
@@ -409,7 +409,7 @@ public struct LauncherKeyValueRow: View {
 
 // MARK: - 统计磁贴
 
-/// 统计磁贴：数值用 title、标签用 micro tertiary 的玻璃小卡。
+/// 统计磁贴：数值用 title、标签用 micro tertiary 的面板小卡。
 public struct LauncherStatTile: View {
     @Environment(\.launcherTheme) private var theme
 

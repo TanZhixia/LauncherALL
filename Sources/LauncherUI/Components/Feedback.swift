@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - 公开类型
 
-/// 进度语义色调：accent 使用主题渐变，其余为对应语义色。
+/// 进度语义色调：accent 使用强调色，其余为对应语义色。
 public enum LauncherProgressTone {
     case accent
     case success
@@ -153,10 +153,10 @@ public struct LauncherProgressBar: View {
         .frame(height: height)
     }
 
-    /// 填充样式：accent 用主题渐变，其余用语义色。
+    /// 填充样式：accent 用强调色，其余用语义色。
     private var fillStyle: AnyShapeStyle {
         switch tone {
-        case .accent: return AnyShapeStyle(theme.primaryGradient)
+        case .accent: return AnyShapeStyle(theme.colors.accent)
         case .success, .warning, .danger: return AnyShapeStyle(tone.color(in: theme))
         }
     }
@@ -216,7 +216,7 @@ public struct LauncherProgressBar: View {
 
 // MARK: - Spinner
 
-/// 环形加载指示器：渐变环旋转，减弱动效时降级为静态环。
+/// 环形加载指示器：单色渐变环旋转（同色相透明度过渡），减弱动效时降级为静态环。
 public struct LauncherSpinner: View {
     @Environment(\.launcherTheme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -347,7 +347,7 @@ public struct LauncherSkeleton: View {
 
 // MARK: - Banner
 
-/// 行内提示条：玻璃底 + 左侧语义色竖条 + 状态图标 + 可选操作按钮。
+/// 行内提示条：面板底 + 左侧语义色竖条 + 状态图标 + 可选操作按钮。
 public struct LauncherBanner: View {
     @Environment(\.launcherTheme) private var theme
 
@@ -410,7 +410,7 @@ public struct LauncherBanner: View {
 
 // MARK: - Toast
 
-/// 浮层轻提示：强玻璃层 + 状态图标 + 标题正文 + 关闭按钮。
+/// 浮层轻提示：浮层面板 + 状态图标 + 标题正文 + 关闭按钮。
 public struct LauncherToast: View {
     @Environment(\.launcherTheme) private var theme
 

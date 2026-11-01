@@ -1,7 +1,7 @@
 import SwiftUI
 import AppKit
 
-/// 启动器外壳：左侧玻璃侧栏 + 右侧页面区，全窗口共用同一套氛围背景。
+/// 启动器外壳：左侧面板侧栏 + 右侧页面区，全窗口共用同一套氛围背景。
 public struct LauncherShellView: View {
     @Environment(LauncherThemeManager.self) private var themeManager
     @State private var selection: LauncherGallerySection
@@ -13,7 +13,7 @@ public struct LauncherShellView: View {
     public var body: some View {
         let theme = themeManager.theme
         ZStack {
-            LauncherAmbientBackground()
+            LauncherAppBackground()
 
             GeometryReader { proxy in
                 HStack(spacing: 0) {
@@ -69,13 +69,8 @@ public struct LauncherShellView: View {
         HStack(spacing: LauncherSpace.sm) {
             ZStack {
                 RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
-                    .fill(theme.primaryGradient)
+                    .fill(theme.colors.accent)
                     .frame(width: 34, height: 34)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
-                    )
-                    .shadow(color: theme.colors.accent.opacity(0.45), radius: 10, y: 4)
                 Image(systemName: "cube.fill")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(theme.colors.onAccent)
@@ -137,22 +132,18 @@ public struct LauncherShellView: View {
             }
         } label: {
             Circle()
-                .fill(
-                    LinearGradient(
-                        colors: preset.swatch,
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
+                .fill(preset.colors.surfaceElevated)
+                .overlay(
+                    Circle().strokeBorder(preset.colors.accent.opacity(0.85), lineWidth: 1)
                 )
                 .frame(width: 18, height: 18)
-                .overlay(
-                    Circle()
-                        .strokeBorder(
-                            isSelected ? themeManager.theme.colors.textPrimary : themeManager.theme.colors.stroke,
-                            lineWidth: isSelected ? 2 : 1
-                        )
-                )
-                .scaleEffect(isSelected ? 1.08 : 1)
+                .overlay {
+                    if isSelected {
+                        Circle()
+                            .strokeBorder(themeManager.theme.colors.textSecondary, lineWidth: 1.5)
+                            .padding(-3)
+                    }
+                }
         }
         .buttonStyle(.plain)
         .help(preset.name)

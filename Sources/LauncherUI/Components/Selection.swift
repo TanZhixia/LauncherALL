@@ -48,26 +48,19 @@ public struct LauncherToggle: View {
         .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 
-    /// 胶囊主体：开启为 accent 渐变 + 光晕，关闭为 surfaceActive。
+    /// 胶囊主体：开启为 accent 纯色，关闭为 surfaceActive。
     private var capsule: some View {
         ZStack(alignment: .leading) {
             Capsule(style: .continuous)
-                .fill(isOn ? AnyShapeStyle(theme.primaryGradient) : AnyShapeStyle(theme.colors.surfaceActive))
+                .fill(isOn ? AnyShapeStyle(theme.colors.accent) : AnyShapeStyle(theme.colors.surfaceActive))
                 .overlay {
                     // 关闭态用略强描边：surfaceActive 在浅色主题下与背景过近
                     Capsule(style: .continuous)
                         .strokeBorder(isOn ? theme.colors.stroke : theme.colors.strokeStrong, lineWidth: 1)
                 }
-                .shadow(
-                    color: isOn ? theme.colors.accent.opacity(0.3) : Color.clear,
-                    radius: 5,
-                    x: 0,
-                    y: 2
-                )
             Circle()
                 .fill(Color.white)
                 .frame(width: knobSize, height: knobSize)
-                .shadow(color: theme.colors.shadow.opacity(0.5), radius: 2.5, x: 0, y: 1)
                 .padding(.leading, (capsuleHeight - knobSize) / 2)
                 .offset(x: isOn ? capsuleWidth - capsuleHeight : 0)
         }
@@ -123,11 +116,11 @@ public struct LauncherCheckbox: View {
         .accessibilityAddTraits(isOn ? .isSelected : [])
     }
 
-    /// 勾选框：选中 accent 渐变 + 勾，未选中内凹底 + 描边。
+    /// 勾选框：选中 accent 纯色 + 勾，未选中内凹底 + 描边。
     private var box: some View {
         ZStack {
             RoundedRectangle(cornerRadius: boxRadius, style: .continuous)
-                .fill(isOn ? AnyShapeStyle(theme.primaryGradient) : AnyShapeStyle(theme.colors.surfaceSubtle))
+                .fill(isOn ? AnyShapeStyle(theme.colors.accent) : AnyShapeStyle(theme.colors.surfaceSubtle))
             RoundedRectangle(cornerRadius: boxRadius, style: .continuous)
                 .strokeBorder(isOn ? theme.colors.accent : theme.colors.strokeStrong, lineWidth: 1)
             if isOn {
@@ -153,7 +146,7 @@ public struct LauncherCheckbox: View {
 
 // MARK: - RadioCard
 
-/// 单选卡片：玻璃底 + 左侧单选圆点，选中时强调描边与柔和强调底。
+/// 单选卡片：面板底 + 左侧单选圆点，选中时强调描边与柔和强调底。
 public struct LauncherRadioCard: View {
     @Environment(\.launcherTheme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -307,7 +300,7 @@ public struct LauncherSlider: View {
                             .strokeBorder(theme.colors.stroke, lineWidth: 1)
                     }
                 Capsule()
-                    .fill(theme.primaryGradient)
+                    .fill(theme.colors.accent)
                     .frame(width: thumbDiameter / 2 + usable * ratio, height: trackHeight)
                 thumb
                     .offset(x: usable * ratio)
@@ -346,7 +339,6 @@ public struct LauncherSlider: View {
         Circle()
             .fill(Color.white)
             .frame(width: thumbDiameter, height: thumbDiameter)
-            .shadow(color: theme.colors.shadow.opacity(0.55), radius: 3, x: 0, y: 1)
             .scaleEffect(isDragging ? 1.1 : 1)
             .launcherAnimation(reduceMotion ? nil : .easeOut(duration: LauncherMotion.fast), value: isDragging)
     }
@@ -394,7 +386,7 @@ public struct LauncherSegment<Value: Hashable>: Identifiable {
 
 // MARK: - SegmentedControl
 
-/// 分段控件：胶囊凹槽容器，选中项用 surfaceElevated + 阴影滑动过渡。
+/// 分段控件：胶囊凹槽容器，选中项用 surfaceElevated + 1px 描边。
 public struct LauncherSegmentedControl<Value: Hashable>: View {
     @Environment(\.launcherTheme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -455,7 +447,6 @@ public struct LauncherSegmentedControl<Value: Hashable>: View {
                             Capsule(style: .continuous)
                                 .strokeBorder(theme.colors.strokeStrong, lineWidth: 1)
                         }
-                        .shadow(color: theme.colors.shadow.opacity(0.28), radius: 5, x: 0, y: 2)
                         .matchedGeometryEffect(id: "segment.indicator", in: indicator)
                 }
             }

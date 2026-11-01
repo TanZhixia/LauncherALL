@@ -19,7 +19,7 @@ enum SnapshotExporter {
 
         for theme in LauncherThemes.all {
             manager.themeID = theme.id
-            manager.glassIntensity = 1.0
+            manager.borderStrength = 1.0
             manager.cornerScale = 1.0
 
             for section in LauncherGallerySection.allCases {
