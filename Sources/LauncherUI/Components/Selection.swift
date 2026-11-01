@@ -59,7 +59,14 @@ public struct LauncherToggle: View {
                         .strokeBorder(isOn ? theme.colors.stroke : theme.colors.strokeStrong, lineWidth: 1)
                 }
             Circle()
-                .fill(Color.white)
+                .fill(isOn ? theme.colors.onAccent : Color.white)
+                .overlay {
+                    Circle()
+                        .strokeBorder(
+                            isOn ? Color.clear : theme.colors.strokeStrong.opacity(theme.isDark ? 0 : 1),
+                            lineWidth: 1
+                        )
+                }
                 .frame(width: knobSize, height: knobSize)
                 .padding(.leading, (capsuleHeight - knobSize) / 2)
                 .offset(x: isOn ? capsuleWidth - capsuleHeight : 0)
@@ -334,10 +341,11 @@ public struct LauncherSlider: View {
         }
     }
 
-    /// 白色拇指：拖动时轻微放大。
+    /// 中性拇指：面板底色 + 1px 描边，深/浅主题下都能与轨道区分；拖动时轻微放大。
     private var thumb: some View {
         Circle()
-            .fill(Color.white)
+            .fill(theme.colors.surfaceElevated)
+            .overlay(Circle().strokeBorder(theme.colors.strokeStrong, lineWidth: 1))
             .frame(width: thumbDiameter, height: thumbDiameter)
             .scaleEffect(isDragging ? 1.1 : 1)
             .launcherAnimation(reduceMotion ? nil : .easeOut(duration: LauncherMotion.fast), value: isDragging)
