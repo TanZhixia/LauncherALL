@@ -1,11 +1,10 @@
 import SwiftUI
 import AppKit
 
-// MARK: - 设置页
+// MARK: - 设置页（PCL 式：左分类 + 右内容）
 
-/// 设置页：页内七个分区（启动 / Java / 性能 / 更新 / 外观 / 账户 / 关于），
-/// 一次只渲染一个分区，最小窗口（1080×720）下无需纵向滚动。
-/// 全部设置项绑定真实的 `LauncherEngine.settings`（自动持久化），Java 运行时来自真实检测。
+/// 设置页：左侧分类面板（游戏 / 启动器 / 关于）+ 右侧单分类内容，
+/// 全部设置项绑定真实 `LauncherEngine.settings`，Java 运行时来自真实检测。
 public struct SettingsPage: View {
     @Environment(\.launcherTheme) private var theme
     @Environment(LauncherThemeManager.self) private var themeManager
@@ -13,165 +12,253 @@ public struct SettingsPage: View {
 
     // MARK: 页面状态（仅 UI 反馈，不属于设置项）
 
-    /// 当前分区 id
-    @State private var section = "general"
+    /// 当前分类 id
+    @State private var section = "launch"
     /// Java 重新检测中
     @State private var isRefreshingJava = false
-    /// 关于分区：检查更新提示
+    /// 关于：检查更新提示
     @State private var updateStatus = "已是最新版本 v0.2.0"
-    /// 关于分区：日志提示
+    /// 关于：日志提示
     @State private var logHint = ""
+    /// 日志分类：最近复制的行数
+    @State private var copiedLogLines: Int?
     /// 保存条提示
     @State private var saveHint = "所有修改会自动保存"
     @State private var saveHintIsSuccess = false
     /// 外观对比样品的输入内容
     @State private var sampleText = "Steve"
 
-    /// 二级导航分区（rail 顺序）
-    private let sections: [LauncherSectionItem] = [
-        LauncherSectionItem(id: "general", title: "启动", systemImage: "play.rectangle.fill"),
-        LauncherSectionItem(id: "java", title: "Java 运行时", systemImage: "cup.and.saucer.fill"),
-        LauncherSectionItem(id: "performance", title: "性能", systemImage: "speedometer"),
-        LauncherSectionItem(id: "update", title: "更新与语言", systemImage: "arrow.triangle.2.circlepath"),
-        LauncherSectionItem(id: "appearance", title: "外观", systemImage: "paintpalette.fill"),
-        LauncherSectionItem(id: "account", title: "账户", systemImage: "person.crop.circle.fill"),
-        LauncherSectionItem(id: "about", title: "关于", systemImage: "info.circle.fill")
-    ]
-
     /// 创建设置页。
     public init() {}
 
     public var body: some View {
-        LauncherAppPage {
-            LauncherPageHeader(title: "设置", subtitle: "启动行为、Java 运行时、性能与外观")
-
-            LauncherSectionLayout {
-                LauncherSectionRail(items: sections, selection: $section, header: nil)
-            } content: {
+        LauncherPageLayout(sideWidth: 236) {
+            sidePanel
+        } main: {
+            LauncherMainPanel {
                 VStack(alignment: .leading, spacing: LauncherSpace.md) {
-                    sectionContent
-                    // 单分区内容较短时把保存条压到内容区底部常驻（滚动模式下自然贴在内容下方）
+                    mainHeader
+                    // 与 PCL 一致的卡片流：分类内容装进卡片，避免设置行直接浮在背景上
+                    GlassPanel(level: .regular, cornerRadius: LauncherRadius.lg, padding: LauncherSpace.md) {
+                        categoryContent
+                    }
+                    // 内容较短时把保存条压到内容区底部常驻（滚动模式下自然贴在内容下方）
                     Spacer(minLength: LauncherSpace.md)
                     saveBar
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+        }
+    }
+
+    // MARK: - 左侧分类面板
+
+    /// 左面板：三组分类，每行 44pt 列表行（选中高亮），Java 行挂运行时数量徽标。
+    private var sidePanel: some View {
+        LauncherSidePanel(
+            title: "设置",
+            count: nil,
+            width: 236,
+            content: {
+                LauncherSidePanelGroup("游戏")
+                sideRow("launch", "启动", systemImage: "play.rectangle.fill")
+                sideRow(
+                    "java",
+                    "Java 运行时",
+                    systemImage: "cup.and.saucer.fill",
+                    badge: "\(engine.javaRuntimes.count)"
+                )
+                sideRow("performance", "性能", systemImage: "speedometer")
+
+                LauncherSidePanelGroup("启动器")
+                sideRow("update", "更新与语言", systemImage: "arrow.triangle.2.circlepath")
+                sideRow("appearance", "外观", systemImage: "paintpalette.fill")
+                sideRow("account", "账户", systemImage: "person.crop.circle.fill")
+
+                LauncherSidePanelGroup("关于")
+                sideRow("about", "关于", systemImage: "info.circle.fill")
+                sideRow("log", "日志与诊断", systemImage: "text.alignleft")
+            },
+            footer: {
+                VStack(spacing: LauncherSpace.xs) {
+                    Rectangle()
+                        .fill(theme.colors.stroke)
+                        .frame(height: 1)
+                    HStack(spacing: LauncherSpace.xs) {
+                        LauncherMonoText("v0.2.0", tone: .tertiary, size: 10)
+                        Spacer(minLength: 0)
+                        LauncherBadge("自动保存", tone: .neutral)
+                    }
+                    .padding(.horizontal, LauncherSpace.xxs)
+                }
+            }
+        )
+    }
+
+    /// 分类行。
+    private func sideRow(
+        _ id: String,
+        _ title: String,
+        systemImage: String,
+        badge: String? = nil
+    ) -> some View {
+        LauncherListRow(
+            title: title,
+            systemImage: systemImage,
+            badge: badge,
+            isSelected: section == id,
+            action: {
+                withAnimation(LauncherMotion.spring) {
+                    section = id
+                }
+            }
+        )
+    }
+
+    // MARK: - 右侧页头
+
+    /// 右侧标题：随分类变化，右侧挂分类状态徽标 / Java 重新检测按钮。
+    private var mainHeader: some View {
+        LauncherPanelHeader(categoryTitle, subtitle: categorySubtitle) {
+            HStack(spacing: LauncherSpace.xs) {
+                if let badge = categoryBadge {
+                    LauncherBadge(badge, tone: .neutral)
+                }
+                if section == "java" {
+                    LauncherIconButton(
+                        systemImage: "arrow.clockwise",
+                        variant: .ghost,
+                        size: .small,
+                        accessibilityLabel: "重新检测 Java 运行时",
+                        isDisabled: isRefreshingJava
+                    ) {
+                        refreshJava()
+                    }
                 }
             }
         }
     }
 
-    /// 当前分区的内容卡片。
-    @ViewBuilder
-    private var sectionContent: some View {
+    /// 当前分类标题。
+    private var categoryTitle: String {
         switch section {
-        case "java": javaSection
-        case "performance": performanceSection
-        case "update": updateSection
-        case "appearance": appearanceSection
-        case "account": accountSection
-        case "about": aboutSection
-        default: generalSection
+        case "java": return "Java 运行时"
+        case "performance": return "性能"
+        case "update": return "更新与语言"
+        case "appearance": return "外观"
+        case "account": return "账户"
+        case "about": return "关于"
+        case "log": return "日志与诊断"
+        default: return "启动"
+        }
+    }
+
+    /// 当前分类说明。
+    private var categorySubtitle: String {
+        switch section {
+        case "java": return "检测本机 JDK，按游戏版本要求选择"
+        case "performance": return "内存与 JVM 参数，修改后下次启动生效"
+        case "update": return "更新通道、下载来源与界面语言"
+        case "appearance": return "主题与全局外观参数，修改立即生效"
+        case "account": return "离线账户的玩家名会写入启动命令"
+        case "about": return "版本信息、更新检查与反馈入口"
+        case "log": return "启动日志与崩溃诊断集中管理"
+        default: return "游戏目录与启动时的默认行为"
+        }
+    }
+
+    /// 当前分类右上角徽标。
+    private var categoryBadge: String? {
+        switch section {
+        case "java": return engine.javaRuntimes.isEmpty ? "未检测到" : "\(engine.javaRuntimes.count) 个"
+        case "appearance": return themeManager.theme.name
+        case "account": return "离线账户"
+        case "update": return updateChannelTitle
+        default: return nil
+        }
+    }
+
+    // MARK: - 右侧分类内容
+
+    @ViewBuilder
+    private var categoryContent: some View {
+        switch section {
+        case "java": javaContent
+        case "performance": performanceContent
+        case "update": updateContent
+        case "appearance": appearanceContent
+        case "account": accountContent
+        case "about": aboutContent
+        case "log": logContent
+        default: launchContent
         }
     }
 
     // MARK: - 1. 启动
 
-    /// 启动分区：游戏目录、版本隔离、启动后最小化、启动前检查更新（全部为真实设置项）。
-    private var generalSection: some View {
-        settingsCard(
-            "启动",
-            subtitle: "游戏目录与启动时的默认行为",
-            accessory: AnyView(LauncherBadge("本地", tone: .neutral, systemImage: "internaldrive"))
-        ) {
-            VStack(alignment: .leading, spacing: LauncherSpace.md) {
-                settingRow(
-                    title: "游戏目录",
-                    subtitle: "versions / mods / saves 的根目录"
-                ) {
-                    HStack(spacing: LauncherSpace.sm) {
-                        LauncherTextField("游戏目录", text: bind(\.gameDirectory), systemImage: "folder")
-                            .frame(maxWidth: 440)
-                        LauncherButton(
-                            "浏览…",
-                            systemImage: "folder.badge.plus",
-                            variant: .secondary,
-                            size: .small
-                        ) {
-                            chooseGameDirectory()
-                        }
-                        .fixedSize()
+    /// 启动分类：游戏目录、版本隔离、最小化、启动前检查。
+    private var launchContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            LauncherSettingRow(
+                "游戏目录",
+                subtitle: "versions / mods / saves 的根目录",
+                tooltip: "启动器会在此目录读写游戏文件；修改后立即生效"
+            ) {
+                HStack(spacing: LauncherSpace.sm) {
+                    LauncherTextField("游戏目录", text: bind(\.gameDirectory), systemImage: "folder")
+                        .frame(maxWidth: 400)
+                    LauncherButton(
+                        "浏览…",
+                        systemImage: "folder.badge.plus",
+                        variant: .secondary,
+                        size: .small
+                    ) {
+                        chooseGameDirectory()
                     }
+                    .fixedSize()
                 }
-
-                LauncherDivider()
-
-                LauncherToggle(
-                    "版本隔离",
-                    isOn: bind(\.versionIsolation),
-                    subtitle: "每个游戏版本使用独立的 mods 与配置目录"
-                )
-
-                LauncherDivider()
-
-                LauncherToggle(
-                    "启动后最小化",
-                    isOn: bind(\.minimizeAfterLaunch),
-                    subtitle: "进入游戏后把启动器窗口收进 Dock"
-                )
-
-                LauncherDivider()
-
-                LauncherCheckbox("启动前检查版本与模组更新", isOn: bind(\.checkUpdatesOnStart))
             }
+
+            booleanRow(
+                "版本隔离",
+                subtitle: "每个游戏版本使用独立的 mods 与配置目录",
+                tooltip: "关闭后所有版本共用同一个 mods 目录",
+                isOn: bind(\.versionIsolation)
+            )
+
+            booleanRow(
+                "启动后最小化",
+                subtitle: "进入游戏后把启动器窗口收进 Dock",
+                isOn: bind(\.minimizeAfterLaunch)
+            )
+
+            booleanRow(
+                "启动前检查更新",
+                subtitle: "启动前检查版本与模组更新",
+                isOn: bind(\.checkUpdatesOnStart),
+                showsDivider: false
+            )
         }
     }
 
     // MARK: - 2. Java 运行时
 
-    /// Java 分区：真实检测结果列表、自动检测开关、自定义路径与重新检测。
-    private var javaSection: some View {
-        settingsCard(
-            "Java 运行时",
-            subtitle: javaSubtitle,
-            accessory: AnyView(LauncherBadge(
-                engine.settings.javaAutoDetect ? "自动检测" : "手动指定",
-                tone: engine.settings.javaAutoDetect ? .neutral : .accent,
-                systemImage: engine.settings.javaAutoDetect ? "wand.and.stars" : "hand.point.up.left"
-            ))
-        ) {
-            VStack(alignment: .leading, spacing: LauncherSpace.md) {
-                LauncherToggle(
-                    "自动检测",
-                    isOn: bind(\.javaAutoDetect),
-                    subtitle: "开启后按版本要求自动挑选最合适的 Java；关闭后使用下方指定的路径"
-                )
+    /// Java 分类：自动选择开关、真实运行时下拉、自定义路径与重新检测。
+    private var javaContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            booleanRow(
+                "自动选择",
+                subtitle: "按游戏版本要求自动挑选 Java；关闭后使用下方指定的路径",
+                tooltip: "启动时会从检测到的运行时中挑出满足版本要求的最高版本",
+                isOn: bind(\.javaAutoDetect)
+            )
 
+            LauncherSettingRow(
+                "Java 运行时",
+                subtitle: javaRuntimeSubtitle,
+                tooltip: javaRuntimeTooltip
+            ) {
                 if engine.javaRuntimes.isEmpty {
-                    javaEmptyRow
-                } else {
-                    VStack(spacing: LauncherSpace.xxs) {
-                        ForEach(Array(engine.javaRuntimes.prefix(3))) { runtime in
-                            javaRuntimeRow(runtime)
-                        }
-                        if engine.javaRuntimes.count > 3 {
-                            Text("另有 \(engine.javaRuntimes.count - 3) 个运行时未列出，可手动指定路径")
-                                .textStyle(.micro, tone: .tertiary)
-                                .padding(.leading, LauncherSpace.sm)
-                        }
-                    }
-                }
-
-                LauncherDivider()
-
-                settingRow(
-                    title: "自定义路径",
-                    subtitle: engine.settings.javaAutoDetect
-                        ? "自动检测开启时此项不生效"
-                        : "手动指定 java 可执行文件（留空则回退到自动检测）"
-                ) {
-                    LauncherTextField("java 可执行文件路径", text: bind(\.javaRuntimePath), systemImage: "terminal")
-                        .frame(maxWidth: 360)
-                }
-
-                HStack(spacing: LauncherSpace.md) {
                     LauncherButton(
                         "重新检测",
                         systemImage: "arrow.clockwise",
@@ -182,133 +269,167 @@ public struct SettingsPage: View {
                         refreshJava()
                     }
                     .fixedSize()
-                    Text("扫描 /Library/Java/JavaVirtualMachines、Homebrew 与 JAVA_HOME")
-                        .textStyle(.micro, tone: .tertiary)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
+                } else {
+                    LauncherMenuButton(
+                        currentJavaLabel,
+                        systemImage: "chevron.down",
+                        variant: .secondary,
+                        size: .small,
+                        groups: javaMenuGroups
+                    )
                 }
             }
-        }
-    }
 
-    /// Java 卡片副标题：随真实检测结果变化。
-    private var javaSubtitle: String {
-        if engine.javaRuntimes.isEmpty {
-            return "尚未检测到 Java，安装 JDK 后点「重新检测」"
-        }
-        return "检测到 \(engine.javaRuntimes.count) 个运行时，点一行即可手动指定"
-    }
-
-    /// 单个真实运行时行：标题 + 版本/厂商，副标题为可执行路径。
-    private func javaRuntimeRow(_ runtime: JavaRuntime) -> some View {
-        let isSelected = engine.settings.javaRuntimePath == runtime.executable.path
-        return LauncherListRow(
-            title: runtime.displayName,
-            subtitle: "\(runtime.version) · \(runtime.executable.path)",
-            systemImage: "cup.and.saucer.fill",
-            badge: "Java \(runtime.majorVersion)",
-            accessory: isSelected
-                ? AnyView(Image(systemName: "checkmark")
-                    .textStyle(.caption, tone: .accent))
-                : nil,
-            isSelected: isSelected,
-            action: {
-                // 手动点选即切换到手动模式，选择立刻生效
-                engine.settings.javaRuntimePath = runtime.executable.path
-                engine.settings.javaAutoDetect = false
-            }
-        )
-    }
-
-    /// 未检测到 Java 时的紧凑空状态（含重新检测按钮）。
-    private var javaEmptyRow: some View {
-        HStack(spacing: LauncherSpace.md) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .textStyle(.body, tone: .warning)
-                .frame(width: 28, height: 28)
-                .background {
-                    RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
-                        .fill(theme.colors.surfaceSubtle)
-                }
-
-            VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
-                Text("未检测到 Java")
-                    .textStyle(.bodyStrong)
-                Text("安装 JDK（推荐 Temurin 21）后重新检测，或在下方手动指定路径")
-                    .textStyle(.micro, tone: .tertiary)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: LauncherSpace.sm)
-
-            LauncherButton(
-                "重新检测",
-                systemImage: "arrow.clockwise",
-                variant: .secondary,
-                size: .small,
-                isLoading: isRefreshingJava
+            LauncherSettingRow(
+                "自定义路径",
+                subtitle: engine.settings.javaAutoDetect
+                    ? "自动选择开启时此项不生效"
+                    : "手动指定 java 可执行文件（留空则回退到自动检测）",
+                tooltip: "例如 /Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home/bin/java"
             ) {
-                refreshJava()
+                LauncherTextField("java 可执行文件路径", text: bind(\.javaRuntimePath), systemImage: "terminal")
+                    .frame(maxWidth: 320)
             }
-            .fixedSize()
+
+            LauncherSettingRow(
+                "重新检测",
+                subtitle: "扫描 /Library/Java/JavaVirtualMachines、Homebrew 与 JAVA_HOME",
+                showsDivider: false
+            ) {
+                LauncherButton(
+                    isRefreshingJava ? "正在检测…" : "立即检测",
+                    systemImage: "arrow.clockwise",
+                    variant: .secondary,
+                    size: .small,
+                    isLoading: isRefreshingJava
+                ) {
+                    refreshJava()
+                }
+                .fixedSize()
+            }
         }
-        .padding(.horizontal, LauncherSpace.md)
-        .padding(.vertical, LauncherSpace.sm)
-        .background {
-            RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
-                .fill(theme.colors.surfaceSubtle)
+    }
+
+    /// Java 行说明：随检测结果变化。
+    private var javaRuntimeSubtitle: String {
+        if engine.javaRuntimes.isEmpty {
+            return "未检测到 Java，安装 JDK 后点「重新检测」"
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
-                .strokeBorder(theme.colors.stroke, lineWidth: 1)
+        return "检测到 \(engine.javaRuntimes.count) 个运行时 · 点开可直接指定"
+    }
+
+    /// Java 行提示：列出全部真实运行时。
+    private var javaRuntimeTooltip: String {
+        if engine.javaRuntimes.isEmpty {
+            return "未找到可执行的 java；可安装 Temurin 21 或在下方手动填写路径"
         }
+        return engine.javaRuntimes
+            .map { "\($0.displayName) · \($0.executable.path)" }
+            .joined(separator: "\n")
+    }
+
+    /// 下拉菜单：自动检测 + 每个真实运行时（当前项带勾选图标）。
+    private var javaMenuGroups: [LauncherMenuGroup] {
+        var items: [LauncherMenuItem] = [
+            LauncherMenuItem(
+                "自动检测",
+                id: "auto",
+                systemImage: engine.settings.javaAutoDetect ? "checkmark" : "wand.and.stars",
+                detail: "按版本要求自动挑选"
+            ) {
+                engine.settings.javaAutoDetect = true
+            }
+        ]
+        for runtime in engine.javaRuntimes {
+            let isCurrent = !engine.settings.javaAutoDetect
+                && engine.settings.javaRuntimePath == runtime.executable.path
+            items.append(
+                LauncherMenuItem(
+                    runtime.displayName,
+                    id: runtime.executable.path,
+                    systemImage: isCurrent ? "checkmark" : "cup.and.saucer.fill",
+                    detail: runtime.executable.path
+                ) {
+                    engine.settings.javaRuntimePath = runtime.executable.path
+                    engine.settings.javaAutoDetect = false
+                }
+            )
+        }
+        return [LauncherMenuGroup(title: "运行时", items: items)]
+    }
+
+    /// 下拉按钮标题：自动 / 已选运行时名 / 自定义路径的 JDK 目录名。
+    private var currentJavaLabel: String {
+        if engine.settings.javaAutoDetect { return "自动检测" }
+        let path = engine.settings.javaRuntimePath
+        if let runtime = engine.javaRuntimes.first(where: { $0.executable.path == path }) {
+            return runtime.displayName
+        }
+        if path.isEmpty { return "未指定" }
+        let components = path.split(separator: "/").map(String.init)
+        if let jdk = components.first(where: { $0.hasSuffix(".jdk") }) { return jdk }
+        return components.last ?? path
     }
 
     // MARK: - 3. 性能
 
-    /// 性能分区：最大内存、渲染线程、JVM 参数（写入真实设置）。
-    private var performanceSection: some View {
-        settingsCard(
-            "性能",
-            subtitle: "修改后下次启动生效",
-            accessory: AnyView(LauncherMonoText("建议 4096 MB", tone: .tertiary, size: 11))
-        ) {
-            VStack(alignment: .leading, spacing: LauncherSpace.md) {
-                settingRow(title: "最大内存", subtitle: memoryHint) {
-                    LauncherSlider(
-                        value: memoryBinding,
-                        range: 1024...8192,
-                        valueText: "\(engine.settings.maxMemoryMB) MB"
-                    )
-                    .frame(width: 300)
-                }
+    /// 性能分类：最大内存滑杆 + 高级启动选项（渲染线程 / JVM 参数）。
+    private var performanceContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            LauncherSettingRow(
+                "最大内存",
+                subtitle: memoryHint,
+                tooltip: "分配给游戏 JVM 的最大堆内存，过大反而会拖慢系统",
+                showsDivider: false
+            ) {
+                LauncherSlider(
+                    value: memoryBinding,
+                    range: 1024...8192,
+                    valueText: "\(engine.settings.maxMemoryMB) MB"
+                )
+                .frame(width: 280)
+            }
 
-                LauncherDivider()
+            LauncherDivider()
 
-                settingRow(
-                    title: "渲染线程",
-                    subtitle: "建议 2 ~ 4 个，数量过多反而增加调度开销"
-                ) {
-                    LauncherStepper(value: bind(\.renderThreads), range: 1...16, unit: "线程")
-                        .frame(width: 200)
-                }
-
-                LauncherDivider()
-
-                VStack(alignment: .leading, spacing: LauncherSpace.xs) {
-                    HStack(alignment: .firstTextBaseline, spacing: LauncherSpace.sm) {
-                        Text("JVM 参数")
-                            .textStyle(.bodyStrong)
-                        Spacer(minLength: LauncherSpace.sm)
-                        LauncherMonoText("\(engine.settings.extraJVMArguments.count) 行", tone: .tertiary, size: 10)
+            LauncherExpander(
+                "高级启动选项",
+                subtitle: "渲染线程与 JVM 参数，非必要无需修改",
+                systemImage: "slider.horizontal.3"
+            ) {
+                VStack(alignment: .leading, spacing: 0) {
+                    LauncherSettingRow(
+                        "渲染线程",
+                        subtitle: "建议 2 ~ 4 个，数量过多反而增加调度开销",
+                        tooltip: "对应 JVM 的 -XX:ActiveProcessorCount 参数"
+                    ) {
+                        LauncherNumberField(
+                            nil,
+                            value: bind(\.renderThreads),
+                            range: 1...16,
+                            step: 1,
+                            unit: "线程"
+                        )
                     }
+
+                    LauncherSettingRow(
+                        "JVM 参数",
+                        subtitle: "每行一个参数，以 # 开头为注释；留空使用默认参数",
+                        tooltip: "已解析 \(engine.settings.extraJVMArguments.count) 个有效参数",
+                        showsDivider: false
+                    ) {
+                        LauncherMonoText("\(engine.settings.extraJVMArguments.count) 个参数", tone: .tertiary, size: 10)
+                    }
+
+                    // 参数较长，独占一行展示（仍在高级折叠区内）
                     LauncherTextArea(
                         "每行一个 JVM 参数，例如 -XX:+UseG1GC",
                         text: bind(\.jvmArguments),
-                        minHeight: 88
+                        minHeight: 72
                     )
-                    Text("每行一个参数，以 # 开头为注释；留空则使用启动器默认参数")
-                        .textStyle(.micro, tone: .tertiary)
+                    .frame(maxWidth: 480)
+                    .padding(.top, LauncherSpace.xs)
+                    .padding(.bottom, LauncherSpace.xs)
                 }
             }
         }
@@ -316,166 +437,230 @@ public struct SettingsPage: View {
 
     // MARK: - 4. 更新与语言
 
-    /// 更新与语言分区：更新通道、下载源、自动清理旧版本、界面语言。
-    private var updateSection: some View {
-        settingsCard(
-            "更新与语言",
-            subtitle: "更新通道与下载来源",
-            accessory: AnyView(LauncherBadge(updateChannelTitle, tone: .accent))
-        ) {
-            VStack(alignment: .leading, spacing: LauncherSpace.md) {
-                settingRow(title: "更新通道", subtitle: "快照与预览通道可能包含未完成的功能") {
-                    LauncherSegmentedControl(
-                        options: updateChannelOptions,
-                        selection: bind(\.updateChannel)
-                    )
-                    .frame(width: 330)
-                }
-
-                LauncherDivider()
-
-                settingRow(title: "下载源", subtitle: "安装游戏与资源时使用") {
-                    LauncherDropdown(
-                        options: downloadSourceOptions,
-                        selection: bind(\.downloadSource),
-                        placeholder: "请选择下载源"
-                    )
-                    .frame(width: 210)
-                }
-
-                LauncherDivider()
-
-                LauncherToggle(
-                    "自动清理旧版本",
-                    isOn: bind(\.autoCleanOldVersions),
-                    subtitle: "安装新版本后提示删除不再使用的旧版本文件"
+    /// 更新与语言分类：更新通道 / 下载源 / 自动清理 / 界面语言（PCL 式下拉菜单）。
+    private var updateContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            LauncherSettingRow(
+                "更新通道",
+                subtitle: "快照与预览通道可能包含未完成的功能",
+                tooltip: "正式版最稳定；快照与预览仅用于尝鲜"
+            ) {
+                LauncherMenuButton(
+                    updateChannelTitle,
+                    systemImage: "chevron.down",
+                    variant: .secondary,
+                    size: .small,
+                    groups: updateChannelMenuGroups
                 )
+            }
 
-                LauncherDivider()
+            LauncherSettingRow(
+                "下载源",
+                subtitle: "安装游戏与资源时使用",
+                tooltip: "官方源最稳妥；镜像源在部分网络下更快"
+            ) {
+                LauncherMenuButton(
+                    downloadSourceTitle,
+                    systemImage: "chevron.down",
+                    variant: .secondary,
+                    size: .small,
+                    groups: downloadSourceMenuGroups
+                )
+            }
 
-                settingRow(title: "界面语言", subtitle: "切换语言后需要重启启动器") {
-                    LauncherDropdown(
-                        options: languageOptions,
-                        selection: bind(\.language),
-                        placeholder: "请选择语言"
-                    )
-                    .frame(width: 210)
-                }
+            booleanRow(
+                "自动清理旧版本",
+                subtitle: "安装新版本后提示删除不再使用的旧版本文件",
+                isOn: bind(\.autoCleanOldVersions)
+            )
+
+            LauncherSettingRow(
+                "界面语言",
+                subtitle: "切换语言后需要重启启动器",
+                showsDivider: false
+            ) {
+                LauncherMenuButton(
+                    languageTitle,
+                    systemImage: "chevron.down",
+                    variant: .secondary,
+                    size: .small,
+                    groups: languageMenuGroups
+                )
             }
         }
+    }
+
+    /// 更新通道标题。
+    private var updateChannelTitle: String {
+        switch engine.settings.updateChannel {
+        case "snapshot": return "快照"
+        case "preview": return "预览"
+        default: return "正式版"
+        }
+    }
+
+    /// 更新通道菜单。
+    private var updateChannelMenuGroups: [LauncherMenuGroup] {
+        let options: [(id: String, title: String, detail: String)] = [
+            ("release", "正式版", "只接收稳定版本"),
+            ("snapshot", "快照", "包含未完成的实验性内容"),
+            ("preview", "预览", "最新构建，可能不稳定")
+        ]
+        return [LauncherMenuGroup(title: "更新通道", items: options.map { option in
+            LauncherMenuItem(
+                option.title,
+                id: option.id,
+                systemImage: engine.settings.updateChannel == option.id ? "checkmark" : "arrow.triangle.2.circlepath",
+                detail: option.detail
+            ) {
+                engine.settings.updateChannel = option.id
+            }
+        })]
+    }
+
+    /// 下载源标题。
+    private var downloadSourceTitle: String {
+        engine.settings.downloadSource == "mirror" ? "镜像源（加速）" : "官方源（Mojang）"
+    }
+
+    /// 下载源菜单。
+    private var downloadSourceMenuGroups: [LauncherMenuGroup] {
+        let options: [(id: String, title: String, detail: String)] = [
+            ("official", "官方源（Mojang）", "最稳妥，速度取决于网络"),
+            ("mirror", "镜像源（加速）", "国内镜像，通常更快")
+        ]
+        return [LauncherMenuGroup(title: "下载源", items: options.map { option in
+            LauncherMenuItem(
+                option.title,
+                id: option.id,
+                systemImage: engine.settings.downloadSource == option.id ? "checkmark" : "globe",
+                detail: option.detail
+            ) {
+                engine.settings.downloadSource = option.id
+            }
+        })]
+    }
+
+    /// 界面语言标题。
+    private var languageTitle: String {
+        switch engine.settings.language {
+        case "en": return "English"
+        case "ja": return "日本語"
+        default: return "简体中文"
+        }
+    }
+
+    /// 界面语言菜单。
+    private var languageMenuGroups: [LauncherMenuGroup] {
+        let options: [(id: String, title: String)] = [
+            ("zh-Hans", "简体中文"),
+            ("en", "English"),
+            ("ja", "日本語")
+        ]
+        return [LauncherMenuGroup(title: "界面语言", items: options.map { option in
+            LauncherMenuItem(
+                option.title,
+                id: option.id,
+                systemImage: engine.settings.language == option.id ? "checkmark" : "character.bubble"
+            ) {
+                engine.settings.language = option.id
+            }
+        })]
     }
 
     // MARK: - 5. 外观
 
-    /// 外观分区：主题选择、边框强度、圆角缩放 +「当前 vs 默认」实时对比。
-    private var appearanceSection: some View {
-        settingsCard(
-            "外观",
-            subtitle: "主题与全局外观参数，修改立即生效",
-            accessory: AnyView(LauncherBadge(currentThemeName, tone: .accent))
-        ) {
-            VStack(alignment: .leading, spacing: LauncherSpace.md) {
-                HStack(spacing: LauncherSpace.md) {
-                    ForEach(themeManager.presets) { preset in
-                        themeOption(preset)
-                    }
-                }
-
-                LauncherDivider()
-
-                VStack(alignment: .leading, spacing: LauncherSpace.sm) {
-                    LauncherSlider(
-                        value: borderStrengthBinding,
-                        range: 0.4...1.6,
-                        label: "边框强度",
-                        valueText: "\(borderStrengthText)×"
-                    )
-                    LauncherSlider(
-                        value: cornerScaleBinding,
-                        range: 0.6...1.4,
-                        label: "圆角缩放",
-                        valueText: "\(cornerScaleText)×"
-                    )
-                }
-
-                LauncherDivider()
-
-                appearanceComparison
+    /// 外观分类：主题下拉 + 边框强度 / 圆角缩放 + 「当前 vs 默认」实时对比。
+    private var appearanceContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            LauncherSettingRow(
+                "主题",
+                subtitle: "深色与浅色两套中性主题，切换立即生效",
+                tooltip: "主题只换色值，结构、间距与控件形态完全一致"
+            ) {
+                LauncherMenuButton(
+                    themeManager.theme.name,
+                    systemImage: "chevron.down",
+                    variant: .secondary,
+                    size: .small,
+                    groups: themeMenuGroups
+                )
             }
+
+            LauncherSettingRow(
+                "边框强度",
+                subtitle: "调节面板与分割线的描边可见度",
+                tooltip: "范围 0.4× ~ 1.6×，默认 1.0×"
+            ) {
+                LauncherSlider(
+                    value: borderStrengthBinding,
+                    range: 0.4...1.6,
+                    valueText: "\(borderStrengthText)×"
+                )
+                .frame(width: 260)
+            }
+
+            LauncherSettingRow(
+                "圆角缩放",
+                subtitle: "按比例缩放全站圆角",
+                tooltip: "范围 0.6× ~ 1.4×，默认 1.0×",
+                showsDivider: false
+            ) {
+                LauncherSlider(
+                    value: cornerScaleBinding,
+                    range: 0.6...1.4,
+                    valueText: "\(cornerScaleText)×"
+                )
+                .frame(width: 260)
+            }
+
+            LauncherDivider()
+
+            appearanceComparison
         }
     }
 
-    /// 单个主题选项：三色色板 + 名称/气质 + 当前标记，点击即切换主题。
-    private func themeOption(_ preset: LauncherTheme) -> some View {
-        let isCurrent = preset.id == themeManager.themeID
-        return Button {
-            themeManager.select(preset.id)
-        } label: {
-            HStack(spacing: LauncherSpace.sm) {
-                HStack(spacing: LauncherSpace.xxs) {
-                    ForEach(preset.swatch.indices, id: \.self) { index in
-                        RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
-                            .fill(preset.swatch[index])
-                            .frame(width: LauncherSpace.lg, height: LauncherSpace.lg)
-                            .overlay {
-                                RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
-                                    .strokeBorder(preset.colors.stroke, lineWidth: 1)
-                            }
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
-                    Text(preset.name)
-                        .textStyle(.bodyStrong)
-                        .lineLimit(1)
-                    Text(preset.tagline)
-                        .textStyle(.micro, tone: .tertiary)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: LauncherSpace.sm)
-
-                if isCurrent {
-                    LauncherBadge("当前", tone: .accent, systemImage: "checkmark")
-                }
+    /// 主题菜单。
+    private var themeMenuGroups: [LauncherMenuGroup] {
+        [LauncherMenuGroup(title: "主题", items: themeManager.presets.map { preset in
+            LauncherMenuItem(
+                preset.name,
+                id: preset.id,
+                systemImage: themeManager.themeID == preset.id ? "checkmark" : "circle.lefthalf.filled",
+                detail: preset.tagline
+            ) {
+                themeManager.select(preset.id)
             }
-            .padding(.horizontal, LauncherSpace.md)
-            .padding(.vertical, LauncherSpace.sm)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
-                    .fill(isCurrent ? theme.colors.surfaceActive : theme.colors.surfaceSubtle)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
-                    .strokeBorder(isCurrent ? theme.colors.accent : theme.colors.stroke, lineWidth: 1)
-            }
-            .contentShape(RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .launcherPointer()
-        .accessibilityAddTraits(isCurrent ? .isSelected : [])
+        })]
     }
 
-    /// 「当前 vs 默认」实时对比：左栏跟随当前主题与边框/圆角乘数，右栏固定为石墨默认值。
+    /// 「当前 vs 默认」对比：左栏跟随当前主题与边框/圆角乘数，右栏固定为石墨默认值。
     private var appearanceComparison: some View {
-        HStack(alignment: .top, spacing: LauncherSpace.md) {
-            comparisonColumn(
-                title: "当前",
-                caption: "\(Int(themeManager.radius(LauncherRadius.lg)))pt · \(borderStrengthText)×",
-                cornerRadius: themeManager.radius(LauncherRadius.lg),
-                themeOverride: nil
-            )
-            comparisonColumn(
-                title: "默认",
-                caption: "\(Int(LauncherRadius.lg))pt · 1.0×",
-                cornerRadius: LauncherRadius.lg,
-                themeOverride: LauncherThemes.graphite
-            )
+        VStack(alignment: .leading, spacing: LauncherSpace.xs) {
+            HStack(spacing: LauncherSpace.sm) {
+                LauncherLabel("实时对比")
+                Spacer(minLength: 0)
+                Text("当前值变化时右侧保持默认，便于比较")
+                    .textStyle(.micro, tone: .tertiary)
+            }
+            HStack(alignment: .top, spacing: LauncherSpace.md) {
+                comparisonColumn(
+                    title: "当前",
+                    caption: "\(Int(themeManager.radius(LauncherRadius.lg)))pt · \(borderStrengthText)×",
+                    cornerRadius: themeManager.radius(LauncherRadius.lg),
+                    themeOverride: nil
+                )
+                comparisonColumn(
+                    title: "默认",
+                    caption: "\(Int(LauncherRadius.lg))pt · 1.0×",
+                    cornerRadius: LauncherRadius.lg,
+                    themeOverride: LauncherThemes.graphite
+                )
+            }
         }
     }
 
-    /// 对比栏：标题 + 同构小样；默认栏整体覆盖为石墨主题，不随当前设置变化。
+    /// 对比栏：标题 + 数值 + 同构小样；默认栏整体覆盖为石墨主题，不随当前设置变化。
     private func comparisonColumn(
         title: String,
         caption: String,
@@ -500,7 +685,7 @@ public struct SettingsPage: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// 对比小样：玻璃面板 + 徽标 + 按钮 + 输入框，覆盖面板 / 控件两层圆角与描边。
+    /// 对比小样：面板 + 徽标 + 按钮 + 输入框，覆盖面板 / 控件两层圆角与描边。
     private func comparisonSample(cornerRadius: CGFloat) -> some View {
         GlassPanel(level: .regular, cornerRadius: cornerRadius, padding: LauncherSpace.sm) {
             VStack(alignment: .leading, spacing: LauncherSpace.xs) {
@@ -518,82 +703,77 @@ public struct SettingsPage: View {
 
     // MARK: - 6. 账户
 
-    /// 账户分区：离线账户的玩家名（写入真实设置，供启动命令使用）。
-    private var accountSection: some View {
-        settingsCard(
-            "账户",
-            subtitle: "离线账户的玩家名会写入启动命令",
-            accessory: AnyView(LauncherBadge("离线账户", tone: .neutral, systemImage: "person.fill"))
-        ) {
-            VStack(alignment: .leading, spacing: LauncherSpace.md) {
-                HStack(spacing: LauncherSpace.md) {
+    /// 账户分类：离线玩家名（写入启动命令）+ 推导的离线 UUID。
+    private var accountContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            LauncherSettingRow(
+                "当前账户",
+                subtitle: "离线模式 · 无需登录即可进入单人游戏"
+            ) {
+                HStack(spacing: LauncherSpace.sm) {
                     LauncherAvatar(
                         name: displayPlayerName,
                         systemImage: "person.fill",
-                        size: 40,
+                        size: 26,
                         isOnline: true
                     )
+                    Text(displayPlayerName)
+                        .textStyle(.bodyStrong)
+                        .lineLimit(1)
+                }
+            }
 
-                    VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
-                        Text(displayPlayerName)
-                            .textStyle(.bodyStrong)
-                            .lineLimit(1)
-                        Text("离线模式 · 无需登录即可进入单人游戏")
-                            .textStyle(.micro, tone: .tertiary)
-                            .lineLimit(1)
+            LauncherSettingRow(
+                "玩家名",
+                subtitle: "游戏内显示名称，最多 16 个字符",
+                tooltip: "启动命令中的 auth_player_name 使用此名称"
+            ) {
+                HStack(spacing: LauncherSpace.sm) {
+                    LauncherTextField("玩家名", text: bind(\.playerName), systemImage: "person.text.rectangle")
+                        .frame(maxWidth: 220)
+                    LauncherButton(
+                        "恢复默认",
+                        systemImage: "arrow.counterclockwise",
+                        variant: .secondary,
+                        size: .small
+                    ) {
+                        engine.settings.playerName = "Steve"
                     }
-
-                    Spacer(minLength: 0)
+                    .fixedSize()
                 }
+            }
 
-                LauncherDivider()
-
-                settingRow(title: "玩家名", subtitle: "游戏内显示名称，最多 16 个字符") {
-                    HStack(spacing: LauncherSpace.sm) {
-                        LauncherTextField("玩家名", text: bind(\.playerName), systemImage: "person.text.rectangle")
-                            .frame(maxWidth: 240)
-                        LauncherButton(
-                            "恢复默认",
-                            systemImage: "arrow.counterclockwise",
-                            variant: .secondary,
-                            size: .small
-                        ) {
-                            engine.settings.playerName = "Steve"
-                        }
-                        .fixedSize()
-                    }
-                }
-
-                VStack(spacing: LauncherSpace.xs) {
-                    LauncherKeyValueRow(key: "账户类型", value: "离线账户", isMono: false)
-                    LauncherKeyValueRow(
-                        key: "离线 UUID",
-                        value: LaunchCommandBuilder.offlineUUID(for: displayPlayerName),
-                        isMono: true
-                    )
-                }
+            LauncherSettingRow(
+                "离线 UUID",
+                subtitle: "由玩家名推导，用于离线服务器识别",
+                tooltip: "离线 UUID 由玩家名按离线算法推导，仅本机使用",
+                showsDivider: false
+            ) {
+                LauncherMonoText(LaunchCommandBuilder.offlineUUID(for: displayPlayerName), tone: .secondary, size: 11)
+                    .lineLimit(1)
             }
         }
     }
 
     // MARK: - 7. 关于
 
-    /// 关于分区：版本 / 构建 / 提交 + 检查更新与日志入口。
-    private var aboutSection: some View {
-        settingsCard(
-            "关于",
-            subtitle: "方块启动器 · 原生 SwiftUI 启动器",
-            accessory: AnyView(LauncherMonoText("v0.2.0", tone: .tertiary, size: 10))
-        ) {
-            VStack(alignment: .leading, spacing: LauncherSpace.md) {
-                VStack(spacing: LauncherSpace.xs) {
-                    LauncherKeyValueRow(key: "版本", value: "v0.2.0")
-                    LauncherKeyValueRow(key: "构建", value: "2026.11.01.1380")
-                    LauncherKeyValueRow(key: "提交", value: "8f3c2a1")
-                }
-
-                LauncherDivider()
-
+    /// 关于分类：版本信息 + 检查更新 / 打开日志。
+    private var aboutContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            LauncherSettingRow("版本", subtitle: "当前发布的启动器版本") {
+                LauncherMonoText("v0.2.0", tone: .secondary, size: 11)
+            }
+            LauncherSettingRow("构建", subtitle: "构建时间戳") {
+                LauncherMonoText("2026.11.01.1380", tone: .secondary, size: 11)
+            }
+            LauncherSettingRow("提交", subtitle: "源码提交短哈希") {
+                LauncherMonoText("8f3c2a1", tone: .secondary, size: 11)
+            }
+            LauncherSettingRow(
+                "更新与反馈",
+                subtitle: updateStatus,
+                showsDivider: false
+            ) {
                 HStack(spacing: LauncherSpace.sm) {
                     LauncherButton(
                         "检查更新",
@@ -613,17 +793,73 @@ public struct SettingsPage: View {
                         openLog()
                     }
                     .fixedSize()
-                    Spacer(minLength: 0)
-                    Text(updateStatus)
-                        .textStyle(.micro, tone: .tertiary)
-                        .lineLimit(1)
                 }
+            }
 
-                if !logHint.isEmpty {
-                    Text(logHint)
-                        .textStyle(.micro, tone: .success)
-                        .lineLimit(1)
+            if !logHint.isEmpty {
+                Text(logHint)
+                    .textStyle(.micro, tone: .success)
+                    .lineLimit(1)
+                    .padding(.top, LauncherSpace.xs)
+            }
+        }
+    }
+
+    // MARK: - 8. 日志与诊断
+
+    /// 日志分类：最近启动日志预览 + 复制到剪贴板（完整诊断在「更多」页）。
+    private var logContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            LauncherSettingRow(
+                "日志与诊断",
+                subtitle: "完整诊断与崩溃报告在「更多 → 日志与诊断」",
+                tooltip: "这里只展示最近一次启动输出的最后几行"
+            ) {
+                HStack(spacing: LauncherSpace.sm) {
+                    LauncherBadge("\(engine.logLines.count) 行", tone: .neutral)
+                    LauncherButton(
+                        "复制最近日志",
+                        systemImage: "doc.on.doc",
+                        variant: .secondary,
+                        size: .small,
+                        isDisabled: engine.logLines.isEmpty
+                    ) {
+                        copyRecentLogs()
+                    }
+                    .fixedSize()
                 }
+            }
+
+            VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
+                if engine.logLines.isEmpty {
+                    Text("还没有日志，启动一次游戏后这里会显示实时输出。")
+                        .textStyle(.micro, tone: .tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    ForEach(Array(engine.logLines.suffix(6).enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                            .textStyle(.monoSmall, tone: .secondary)
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            .padding(LauncherSpace.md)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(height: 96, alignment: .topLeading)
+            .background {
+                RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
+                    .fill(theme.colors.surfaceSubtle)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
+                    .strokeBorder(theme.colors.stroke, lineWidth: 1)
+            }
+
+            if let copiedLogLines {
+                Text("已复制最近 \(copiedLogLines) 行日志到剪贴板")
+                    .textStyle(.micro, tone: .success)
+                    .padding(.top, LauncherSpace.xs)
             }
         }
     }
@@ -652,49 +888,35 @@ public struct SettingsPage: View {
         }
     }
 
-    // MARK: - 通用布局
+    // MARK: - 行辅助
 
-    /// 分区卡片：面板 + 区块标题 + 内容，保证各分区节奏一致。
-    private func settingsCard<Content: View>(
+    /// 布尔设置行：LauncherToggle + 分隔线，与 `LauncherSettingRow` 视觉节奏一致。
+    private func booleanRow(
         _ title: String,
-        subtitle: String,
-        accessory: AnyView? = nil,
-        @ViewBuilder content: @escaping () -> Content
-    ) -> some View {
-        LauncherCard(level: .regular, padding: LauncherSpace.lg) {
-            VStack(alignment: .leading, spacing: LauncherSpace.md) {
-                LauncherSectionHeader(title: title, subtitle: subtitle, accessory: accessory)
-                content()
-            }
-        }
-    }
-
-    /// 设置行：左侧标题 / 说明，右侧控件，统一最小行高保证跨行对齐。
-    private func settingRow<Control: View>(
-        title: String,
         subtitle: String? = nil,
-        @ViewBuilder control: () -> Control
+        tooltip: String? = nil,
+        isOn: Binding<Bool>,
+        showsDivider: Bool = true
     ) -> some View {
-        HStack(alignment: .center, spacing: LauncherSpace.lg) {
-            VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
-                Text(title)
-                    .textStyle(.bodyStrong)
-                if let subtitle {
-                    Text(subtitle)
-                        .textStyle(.micro, tone: .tertiary)
-                        .lineLimit(1)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: LauncherSpace.md) {
+                LauncherToggle(title, isOn: isOn, subtitle: subtitle)
+                if let tooltip {
+                    LauncherHintIcon(tooltip)
                 }
             }
-            Spacer(minLength: LauncherSpace.md)
-            control()
+            if showsDivider {
+                Rectangle()
+                    .fill(theme.colors.stroke.opacity(0.6))
+                    .frame(height: 1)
+            }
         }
-        .frame(minHeight: LauncherControl.large)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, LauncherSpace.xxs)
     }
 
     // MARK: - 设置绑定
 
-    /// 把 `LauncherSettings` 的字段包装成 Binding（等价于 `@Bindable` 的动态成员绑定）。
+    /// 把 `LauncherSettings` 的字段包装成 Binding（等价于 `@Bindable` 的成员绑定）。
     private func bind<T>(_ keyPath: ReferenceWritableKeyPath<LauncherSettings, T>) -> Binding<T> {
         Binding(
             get: { engine.settings[keyPath: keyPath] },
@@ -740,41 +962,6 @@ public struct SettingsPage: View {
         return "推荐 4096 MB，适合 1.21.4 + 214 个模组的实例"
     }
 
-    /// 更新通道标题。
-    private var updateChannelTitle: String {
-        switch engine.settings.updateChannel {
-        case "snapshot": return "快照"
-        case "preview": return "预览"
-        default: return "正式版"
-        }
-    }
-
-    /// 更新通道选项。
-    private var updateChannelOptions: [LauncherSegment<String>] {
-        [
-            LauncherSegment(id: "release", title: "正式版", systemImage: "checkmark.seal"),
-            LauncherSegment(id: "snapshot", title: "快照", systemImage: "bolt"),
-            LauncherSegment(id: "preview", title: "预览", systemImage: "sparkles")
-        ]
-    }
-
-    /// 下载源选项。
-    private var downloadSourceOptions: [LauncherSegment<String>] {
-        [
-            LauncherSegment(id: "official", title: "官方源（Mojang）"),
-            LauncherSegment(id: "mirror", title: "镜像源（加速）")
-        ]
-    }
-
-    /// 界面语言选项。
-    private var languageOptions: [LauncherSegment<String>] {
-        [
-            LauncherSegment(id: "zh-Hans", title: "简体中文"),
-            LauncherSegment(id: "en", title: "English"),
-            LauncherSegment(id: "ja", title: "日本語")
-        ]
-    }
-
     /// 边框强度显示（保留一位小数）。
     private var borderStrengthText: String {
         String((themeManager.borderStrength * 10).rounded() / 10)
@@ -785,12 +972,7 @@ public struct SettingsPage: View {
         String((themeManager.cornerScale * 10).rounded() / 10)
     }
 
-    /// 当前主题名字。
-    private var currentThemeName: String {
-        themeManager.presets.first { $0.id == themeManager.themeID }?.name ?? theme.name
-    }
-
-    /// 玩家名：空值时回退到默认名，避免头像与启动命令出现空字符串。
+    /// 玩家名：空值时回退到默认名，避免头像与 UUID 出现空值。
     private var displayPlayerName: String {
         let name = engine.settings.playerName.trimmingCharacters(in: .whitespaces)
         return name.isEmpty ? "Steve" : name
@@ -823,6 +1005,15 @@ public struct SettingsPage: View {
         }
     }
 
+    /// 复制最近日志到剪贴板（真实操作，仅取最后 50 行）。
+    private func copyRecentLogs() {
+        let lines = Array(engine.logLines.suffix(50))
+        guard !lines.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+        copiedLogLines = lines.count
+    }
+
     /// 保存：设置已自动持久化，这里只给可见反馈。
     private func saveSettings() {
         saveHint = "已保存"
@@ -834,7 +1025,7 @@ public struct SettingsPage: View {
         }
     }
 
-    /// 恢复默认：真实重置全部设置项。
+    /// 恢复默认：真实重置全部设置项与外观参数。
     private func resetSettings() {
         engine.settings.resetToDefaults()
         themeManager.borderStrength = 1.0

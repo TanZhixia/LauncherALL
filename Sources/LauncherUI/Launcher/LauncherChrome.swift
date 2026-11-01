@@ -195,7 +195,8 @@ public struct LauncherAccountChip: View {
 /// 启动器顶部导航项。
 public struct LauncherTabButton: View {
     @Environment(\.launcherTheme) private var theme
-    @State private var isHovering = false
+    @State private var hovering = false
+
     private let tab: LauncherTab
     private let isSelected: Bool
     private let action: () -> Void
@@ -208,31 +209,35 @@ public struct LauncherTabButton: View {
 
     public var body: some View {
         Button(action: action) {
-            HStack(spacing: LauncherSpace.xs + 2) {
+            HStack(spacing: 6) {
                 Image(systemName: tab.systemImage)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 11.5, weight: .semibold))
                 Text(tab.title)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
             }
-            .foregroundStyle(isSelected ? theme.colors.textPrimary : theme.colors.textSecondary)
-            .padding(.horizontal, LauncherSpace.md)
+            .foregroundStyle(isSelected ? theme.colors.accent : theme.colors.textSecondary)
+            .padding(.horizontal, 12)
             .frame(height: 30)
             .background {
-                RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
-                    .fill(isSelected ? theme.colors.surfaceActive : (isHovering ? theme.colors.surfaceHover : .clear))
+                RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
+                    .fill(background)
             }
-            .contentShape(Rectangle())
+            .contentShape(RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous))
         }
         .buttonStyle(.plain)
-        .keyboardShortcut(tab.keyEquivalent, modifiers: .command)
         .launcherPointer()
-        .onHover { isHovering = $0 }
-        .help("\(tab.title)（\(tab.shortcut)）")
+        .onHover { hovering = $0 }
+        .launcherAnimation(LauncherMotion.smooth, value: hovering)
         .accessibilityLabel(tab.title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
-}
 
+    private var background: Color {
+        if isSelected { return theme.colors.accentSoft }
+        if hovering { return theme.colors.surfaceHover }
+        return .clear
+    }
+}
 
 // MARK: - 页面内二级导航
 

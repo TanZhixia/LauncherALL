@@ -2,69 +2,48 @@ import AppKit
 import Foundation
 import SwiftUI
 
-/// 下载页：真实 Mojang 版本清单 + 真实安装进度；页内三个分区，最小窗口下无需滚动。
+/// 下载页（PCL 式布局）：左侧分类与版本列表，右侧版本详情 / 安装选项 / 安装进度。
 public struct DownloadPage: View {
+    @Environment(\.launcherTheme) private var theme
     @Environment(LauncherEngine.self) private var engine
 
-    @State private var section = "versions"
-
-    // 版本库：真实清单、筛选与排序
+    // 左面板：分类、搜索、排序
+    @State private var category: DownloadCategory = .release
     @State private var searchText = ""
-    @State private var typeFilter: VersionTypeFilter = DownloadPage.defaultTypeFilter
     @State private var sortMode: VersionSort = .newest
+    @State private var selectedVersionID: String?
+
+    // 真实清单
     @State private var manifest: VersionManifest? = DownloadPage.launchManifestCache
     @State private var isLoadingManifest = DownloadPage.launchManifestCache == nil
     @State private var manifestError: String?
     @State private var lastInstallID: String?
 
-    // 整合包：仍为页面内演示数据（后端暂不支持整合包安装）
+    // 安装选项（后端当前始终完整安装，选项仅作界面演示）
+    @State private var installDependencies = true
+    @State private var installAssets = true
+
+    // 整合包演示
     @State private var modpacks: [LauncherVersionItem] = DemoModpacks.items
     @State private var importHint: String?
 
-    // 下载任务分区
+    // 磁盘
     @State private var isRefreshingInstalled = false
 
     /// 首帧快速展示：读取与 MojangManifestService 相同位置的清单缓存，随后仍异步刷新。
     private static let launchManifestCache: VersionManifest? = readCachedManifest()
 
-    /// 默认筛选跟随设置里的更新渠道：快照渠道默认看快照，其余渠道默认看正式版。
-    private static let defaultTypeFilter: VersionTypeFilter =
-        LauncherSettings.shared.updateChannel == "snapshot" ? .snapshot : .release
-
-    /// 列表一次最多展示的行数，保证最小窗口不出现纵向滚动。
-    private let maxVisibleVersions = 6
+    /// 左面板一次最多展示的版本行数，保证最小窗口下左面板不溢出。
+    private let maxVisibleVersions = 5
 
     public init() {}
 
     public var body: some View {
-        LauncherAppPage {
-            LauncherPageHeader(title: "下载", subtitle: "安装游戏版本、加载器与整合包") {
-                HStack(spacing: LauncherSpace.sm) {
-                    LauncherButton(
-                        "打开文件夹",
-                        systemImage: "folder",
-                        variant: .secondary,
-                        size: .small
-                    ) {
-                        NSWorkspace.shared.open(engine.settings.resolvedGameDirectory)
-                    }
-                    LauncherButton(
-                        "刷新列表",
-                        systemImage: "arrow.clockwise",
-                        variant: .secondary,
-                        size: .small,
-                        isLoading: isLoadingManifest
-                    ) {
-                        refreshAll()
-                    }
-                }
-            }
-            .padding(.bottom, LauncherSpace.xxs)
-
-            LauncherSectionLayout {
-                LauncherSectionRail(items: sections, selection: $section, header: "下载")
-            } content: {
-                sectionContent
+        LauncherPageLayout(sideWidth: 272) {
+            sidePanel
+        } main: {
+            LauncherMainPanel {
+                mainContent
             }
         }
         .task {
@@ -75,240 +54,506 @@ public struct DownloadPage: View {
         }
     }
 
-    // MARK: - 分区
+    // MARK: - 左面板
 
-    private var sections: [LauncherSectionItem] {
-        [
-            LauncherSectionItem(
-                id: "versions",
-                title: "版本库",
-                systemImage: "square.stack.3d.up.fill",
-                badge: manifest.map { "\($0.versions.count)" }
-            ),
-            LauncherSectionItem(
-                id: "modpacks",
-                title: "整合包",
-                systemImage: "shippingbox.fill",
-                badge: "\(modpacks.count)"
-            ),
-            LauncherSectionItem(
-                id: "tasks",
-                title: "下载任务",
-                systemImage: "arrow.down.circle.fill",
-                badge: engine.isBusy ? "1" : nil
+    private var sidePanel: some View {
+        LauncherSidePanel(
+            title: "下载",
+            count: manifest.map { "\($0.versions.count)" },
+            width: 272,
+            searchText: $searchText,
+            searchPlaceholder: "搜索版本号",
+            toolbar: AnyView(sideToolbar)
+        ) {
+            sideContent
+        } footer: {
+            sideFooter
+        }
+    }
+
+    private var sideToolbar: some View {
+        HStack(spacing: LauncherSpace.xxs) {
+            LauncherIconMenu(
+                groups: sortMenuGroups,
+                systemImage: "arrow.up.arrow.down",
+                accessibilityLabel: "排序方式"
             )
-        ]
-    }
-
-    @ViewBuilder
-    private var sectionContent: some View {
-        switch section {
-        case "modpacks":
-            modpackSection
-        case "tasks":
-            taskSection
-        default:
-            versionSection
-        }
-    }
-
-    // MARK: - 分区一：版本库（真实清单）
-
-    private var versionSection: some View {
-        VStack(alignment: .leading, spacing: LauncherSpace.md) {
-            if manifest == nil {
-                manifestPlaceholder
-            } else {
-                versionToolbar
-                versionList
-                if let manifestError {
-                    LauncherBanner(
-                        title: "清单刷新失败，正在使用本地缓存",
-                        message: manifestError,
-                        tone: .warning,
-                        actionTitle: "重试",
-                        onAction: { refreshManifest(forceRefresh: true) }
-                    )
-                }
-            }
-
-            if case .failed(let message) = engine.phase, let lastInstallID {
-                LauncherBanner(
-                    title: "安装失败：\(lastInstallID)",
-                    message: message,
-                    tone: .danger,
-                    actionTitle: "重试",
-                    onAction: { install(lastInstallID) }
-                )
+            LauncherIconButton(
+                systemImage: "arrow.clockwise",
+                variant: .ghost,
+                size: .small,
+                accessibilityLabel: "刷新版本清单",
+                isDisabled: isLoadingManifest
+            ) {
+                refreshAll()
             }
         }
     }
 
-    /// 加载中 / 首次失败：骨架占位或错误横幅。
     @ViewBuilder
-    private var manifestPlaceholder: some View {
-        if let manifestError {
-            VStack(spacing: LauncherSpace.md) {
-                LauncherBanner(
-                    title: "无法获取版本清单",
-                    message: manifestError,
-                    tone: .danger,
-                    actionTitle: "重试",
-                    onAction: { refreshManifest(forceRefresh: true) }
-                )
-                Text("版本清单来自 Mojang 官方接口，首次加载需要联网。")
-                    .textStyle(.micro, tone: .tertiary)
-            }
-        } else {
-            LauncherCard(level: .regular, padding: LauncherSpace.lg) {
+    private var sideContent: some View {
+        if manifest == nil {
+            if let manifestError {
                 VStack(alignment: .leading, spacing: LauncherSpace.sm) {
-                    HStack(spacing: LauncherSpace.sm) {
-                        LauncherSpinner(size: 16)
-                        Text("正在从 Mojang 获取版本清单…")
-                            .textStyle(.micro, tone: .secondary)
-                        Spacer(minLength: LauncherSpace.sm)
-                        LauncherBadge("12 小时缓存", tone: .neutral)
+                    Text("版本清单加载失败")
+                        .textStyle(.bodyStrong)
+                    Text(manifestError)
+                        .textStyle(.micro, tone: .tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    LauncherButton(
+                        "重试",
+                        systemImage: "arrow.clockwise",
+                        variant: .secondary,
+                        size: .small,
+                        isFullWidth: true
+                    ) {
+                        refreshManifest(forceRefresh: true)
                     }
-                    ForEach(0..<5, id: \.self) { _ in
+                }
+                .padding(.horizontal, LauncherSpace.xs)
+            } else {
+                VStack(alignment: .leading, spacing: LauncherSpace.xs) {
+                    ForEach(0..<3, id: \.self) { _ in
                         LauncherSkeleton(
                             height: LauncherControl.large,
                             cornerRadius: LauncherRadius.md
                         )
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-        }
-    }
+        } else {
+            LauncherSidePanelGroup("Minecraft", trailing: "\(typeVersions.count)")
+            typeChips
 
-    /// 搜索 / 类型筛选 / 排序：只在版本库分区出现一次。
-    private var versionToolbar: some View {
-        HStack(spacing: LauncherSpace.md) {
-            LauncherSearchField(text: $searchText, placeholder: "搜索版本号")
-                .frame(width: 200)
-
-            HStack(spacing: LauncherSpace.sm) {
-                ForEach(VersionTypeFilter.allCases) { option in
-                    LauncherChip(option.rawValue, isSelected: typeFilter == option) {
-                        withAnimation(LauncherMotion.spring) {
-                            typeFilter = option
-                        }
+            if category.isMinecraft {
+                if displayedVersions.isEmpty {
+                    Text("没有匹配的版本")
+                        .textStyle(.micro, tone: .tertiary)
+                        .padding(.horizontal, LauncherSpace.xs)
+                        .padding(.vertical, LauncherSpace.sm)
+                } else {
+                    ForEach(displayedVersions) { version in
+                        versionRow(version)
                     }
                 }
             }
 
-            Spacer(minLength: LauncherSpace.sm)
-
-            LauncherDropdown(options: sortOptions, selection: $sortMode, placeholder: "排序")
-                .frame(width: 150)
+            LauncherSidePanelGroup("社区资源", trailing: "6")
+            communityGrid
         }
     }
 
-    private var versionList: some View {
-        LauncherCard(level: .regular, padding: LauncherSpace.lg) {
+    private var typeChips: some View {
+        HStack(spacing: LauncherSpace.xs) {
+            ForEach(DownloadCategory.minecraftTypes) { type in
+                LauncherChip(type.title, isSelected: category == type) {
+                    selectCategory(type)
+                }
+            }
+        }
+        .padding(.horizontal, LauncherSpace.xxs)
+    }
+
+    private func versionRow(_ version: VersionSummary) -> some View {
+        LauncherListRow(
+            title: version.id,
+            subtitle: releaseDate(version.releaseTime),
+            systemImage: icon(for: version.type),
+            badge: typeLabel(version.type),
+            accessory: AnyView(
+                HStack(spacing: LauncherSpace.xs) {
+                    if installedIDs.contains(version.id) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .textStyle(.micro, tone: .success)
+                            .accessibilityLabel("已安装")
+                    }
+                    Image(systemName: "chevron.right")
+                        .textStyle(.micro, tone: .tertiary)
+                }
+            ),
+            isSelected: version.id == selectedVersion?.id,
+            action: {
+                withAnimation(LauncherMotion.spring) {
+                    selectedVersionID = version.id
+                }
+            }
+        )
+        .launcherContextMenu(contextMenuGroups(for: version))
+    }
+
+    private var communityGrid: some View {
+        LazyVGrid(
+            columns: [
+                GridItem(.flexible(), spacing: LauncherSpace.xs),
+                GridItem(.flexible(), spacing: LauncherSpace.xs)
+            ],
+            spacing: LauncherSpace.xs
+        ) {
+            ForEach(DownloadCategory.communityResources) { item in
+                communityTile(item)
+            }
+        }
+        .padding(.horizontal, LauncherSpace.xxs)
+    }
+
+    private func communityTile(_ item: DownloadCategory) -> some View {
+        let isSelected = category == item
+        return Button {
+            selectCategory(item)
+        } label: {
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: LauncherSpace.xs) {
+                    Image(systemName: item.systemImage)
+                        .textStyle(.micro, tone: isSelected ? .accent : .secondary)
+                    Text(item.title)
+                        .textStyle(.caption, tone: isSelected ? .accent : .primary)
+                        .lineLimit(1)
+                }
+                Text(item == .modpack ? "页面内演示" : "暂未接入")
+                    .textStyle(.micro, tone: .tertiary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, LauncherSpace.sm)
+            .padding(.vertical, LauncherSpace.xs)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
+                    .fill(isSelected ? theme.colors.accentSoft : theme.colors.surfaceSubtle)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? theme.colors.accent.opacity(0.45) : theme.colors.stroke,
+                        lineWidth: 1
+                    )
+            }
+            .contentShape(RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous))
+        }
+        .buttonStyle(LauncherPressEffect(scale: 0.98))
+        .launcherPointer()
+        .accessibilityLabel(item.title)
+    }
+
+    private var sideFooter: some View {
+        VStack(spacing: LauncherSpace.xs) {
+            Rectangle()
+                .fill(theme.colors.stroke)
+                .frame(height: 1)
+
+            LauncherButton(
+                "刷新列表",
+                systemImage: "arrow.clockwise",
+                variant: .secondary,
+                size: .small,
+                isLoading: isLoadingManifest,
+                isFullWidth: true
+            ) {
+                refreshAll()
+            }
+
+            HStack(spacing: LauncherSpace.xs) {
+                Text("已安装 \(engine.installedVersions.count) 个版本")
+                    .textStyle(.micro, tone: .tertiary)
+                Spacer(minLength: 0)
+                LauncherMonoText(
+                    "\(displayedVersions.count) / \(typeVersions.count)",
+                    tone: .tertiary,
+                    size: 10
+                )
+            }
+        }
+    }
+
+    // MARK: - 右内容
+
+    @ViewBuilder
+    private var mainContent: some View {
+        if manifest == nil {
+            manifestPlaceholder
+        } else if category == .modpack {
+            modpackMain
+        } else if !category.isMinecraft {
+            unsupportedMain
+        } else {
+            versionMain
+        }
+    }
+
+    @ViewBuilder
+    private var manifestPlaceholder: some View {
+        LauncherPanelHeader("下载 Minecraft", subtitle: "版本清单来自 Mojang 官方接口")
+        if let manifestError {
+            LauncherBanner(
+                title: "无法获取版本清单",
+                message: manifestError,
+                tone: .danger,
+                actionTitle: "重试",
+                onAction: { refreshManifest(forceRefresh: true) }
+            )
+            Text("首次加载需要联网；加载成功后会在本地缓存 12 小时。")
+                .textStyle(.micro, tone: .tertiary)
+        } else {
+            HStack(spacing: LauncherSpace.sm) {
+                LauncherSpinner(size: 16)
+                Text("正在获取 Mojang 版本清单…")
+                    .textStyle(.micro, tone: .secondary)
+            }
+            LauncherSkeleton(height: 96, cornerRadius: LauncherRadius.lg)
+            LauncherSkeleton(height: 96, cornerRadius: LauncherRadius.lg)
+        }
+    }
+
+    @ViewBuilder
+    private var versionMain: some View {
+        if let version = selectedVersion {
+            LauncherPanelHeader(
+                version.id,
+                subtitle: "发布于 \(releaseDate(version.releaseTime)) · \(typeLabel(version.type))"
+            ) {
+                LauncherIconMenu(
+                    groups: moreMenuGroups(for: version),
+                    accessibilityLabel: "更多版本操作"
+                )
+            }
+
+            if let manifestError {
+                LauncherBanner(
+                    title: "清单刷新失败，正在使用本地缓存",
+                    message: manifestError,
+                    tone: .warning,
+                    actionTitle: "重试",
+                    onAction: { refreshManifest(forceRefresh: true) }
+                )
+            }
+
+            versionInfoCard(version)
+            installCard(version)
+            bottomCards
+        } else {
+            LauncherEmptyState(
+                systemImage: "magnifyingglass",
+                title: "没有匹配的版本",
+                message: "换个搜索词，或者切换到其他分类看看。",
+                actionTitle: "重置搜索",
+                onAction: { searchText = "" }
+            )
+        }
+    }
+
+    private func versionInfoCard(_ version: VersionSummary) -> some View {
+        GlassPanel(level: .regular, cornerRadius: LauncherRadius.lg, padding: LauncherSpace.lg) {
+            HStack(alignment: .top, spacing: LauncherSpace.lg) {
+                LauncherBlockArt(
+                    seed: version.id,
+                    cornerRadius: LauncherRadius.md,
+                    label: typeLabel(version.type)
+                )
+                .frame(width: 108, height: 72)
+
+                VStack(alignment: .leading, spacing: LauncherSpace.sm) {
+                    HStack(spacing: LauncherSpace.xs) {
+                        Text(version.id)
+                            .textStyle(.title)
+                        LauncherBadge(typeLabel(version.type), tone: .accent)
+                        LauncherBadge(
+                            installedIDs.contains(version.id) ? "已安装" : "未安装",
+                            tone: installedIDs.contains(version.id) ? .success : .neutral
+                        )
+                        Spacer(minLength: 0)
+                    }
+
+                    HStack(spacing: LauncherSpace.xl) {
+                        LauncherInlineStat("发布时间", value: releaseDate(version.releaseTime))
+                        LauncherInlineStat("版本类型", value: typeLabel(version.type))
+                        LauncherInlineStat("Java 要求", value: "21+", isMono: true)
+                    }
+
+                    HStack(spacing: LauncherSpace.xs) {
+                        LauncherHintIcon("真实安装器会按版本清单要求检测 Java 运行时。")
+                        Text("启动器要求 Java 21+ · 安装前会自动检查运行时")
+                            .textStyle(.micro, tone: .tertiary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: LauncherSpace.sm)
+
+                VStack(alignment: .trailing, spacing: LauncherSpace.xs) {
+                    actionButtons(for: version)
+                    Text("Mojang 官方清单")
+                        .textStyle(.micro, tone: .tertiary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func actionButtons(for version: VersionSummary) -> some View {
+        if installedIDs.contains(version.id) {
+            LauncherButton(
+                "已安装",
+                systemImage: "checkmark",
+                variant: .secondary,
+                size: .medium,
+                isDisabled: true
+            ) {}
+        } else if isDownloading(version.id) {
+            LauncherButton(
+                "取消",
+                systemImage: "xmark",
+                variant: .secondary,
+                size: .medium,
+                isDisabled: true
+            ) {}
+            .launcherTooltip("真实安装任务暂不支持中断，请等待完成")
+        } else {
+            LauncherButton(
+                "安装",
+                systemImage: "arrow.down.circle",
+                variant: .primary,
+                size: .medium,
+                isDisabled: engine.isBusy
+            ) {
+                startInstall(version.id)
+            }
+        }
+    }
+
+    private func installCard(_ version: VersionSummary) -> some View {
+        LauncherCard(level: .regular, padding: LauncherSpace.md) {
             VStack(alignment: .leading, spacing: LauncherSpace.sm) {
                 LauncherSectionHeader(
-                    title: "版本列表",
-                    subtitle: versionListSubtitle,
+                    title: isDownloading(version.id) ? "安装进度" : "安装选项",
+                    subtitle: isDownloading(version.id)
+                        ? "真实下载中 · 离开本页不会中断"
+                        : "安装前可选择下载内容",
                     accessory: AnyView(
-                        LauncherBadge("\(displayedVersions.count) 个", tone: .neutral)
+                        LauncherBadge(
+                            isDownloading(version.id) ? "下载中" : (installedIDs.contains(version.id) ? "已完成" : "待安装"),
+                            tone: isDownloading(version.id) ? .accent : (installedIDs.contains(version.id) ? .success : .neutral)
+                        )
                     )
                 )
 
-                if displayedVersions.isEmpty {
-                    LauncherEmptyState(
-                        systemImage: "magnifyingglass",
-                        title: "没有匹配的版本",
-                        message: "换个关键词，或者把筛选切回「全部」。",
-                        actionTitle: "重置筛选",
-                        onAction: { resetFilters() }
+                if let progress = downloadingProgress(version.id) {
+                    LauncherProgressBar(value: progress.fraction, label: progress.phase)
+                    HStack(spacing: LauncherSpace.sm) {
+                        LauncherMonoText(
+                            "\(progress.completed) / \(progress.total) 个文件",
+                            tone: .tertiary,
+                            size: 10
+                        )
+                        Spacer(minLength: LauncherSpace.sm)
+                        LauncherStatusDot(tone: .warning)
+                        Text("在后台继续：离开本页不会中断安装")
+                            .textStyle(.micro, tone: .tertiary)
+                            .lineLimit(1)
+                    }
+                } else if let lastInstallID, case .failed(let message) = engine.phase, lastInstallID == version.id {
+                    LauncherBanner(
+                        title: "安装失败",
+                        message: message,
+                        tone: .danger,
+                        actionTitle: "重试",
+                        onAction: { startInstall(version.id) }
                     )
-                    .frame(maxWidth: .infinity)
                 } else {
-                    VStack(spacing: LauncherSpace.xxs) {
-                        ForEach(displayedVersions) { version in
-                            versionRow(version)
+                    HStack(spacing: LauncherSpace.xxl) {
+                        LauncherCheckbox("安装依赖库", isOn: $installDependencies)
+                        LauncherCheckbox("安装资源文件", isOn: $installAssets)
+                        Spacer(minLength: LauncherSpace.sm)
+                        LauncherButton(
+                            installedIDs.contains(version.id) ? "重新安装" : "开始安装",
+                            systemImage: "arrow.down.circle",
+                            variant: .primary,
+                            size: .large,
+                            isDisabled: engine.isBusy
+                        ) {
+                            startInstall(version.id)
                         }
                     }
-                    .launcherAnimation(LauncherMotion.spring, value: engine.phase)
-                }
 
-                LauncherDivider()
-
-                HStack(spacing: LauncherSpace.sm) {
-                    LauncherMonoText(
-                        "显示 \(displayedVersions.count) / 筛选后 \(filteredVersions.count) 个 · 已安装 \(installedIDs.count) 个",
-                        tone: .tertiary,
-                        size: 10
-                    )
-                    Spacer(minLength: LauncherSpace.sm)
-                    LauncherMonoText("来源：Mojang 官方清单", tone: .tertiary, size: 10)
+                    HStack(spacing: LauncherSpace.xs) {
+                        LauncherHintIcon("真实安装器始终下载完整依赖与资源；两个选项目前仅作界面演示。")
+                        Text("真实安装器始终完整安装依赖与资源，选项仅作演示")
+                            .textStyle(.micro, tone: .tertiary)
+                            .lineLimit(1)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func versionRow(_ version: VersionSummary) -> some View {
-        LauncherListRow(
-            title: version.id,
-            subtitle: "发布于 \(releaseDate(version.releaseTime))",
-            systemImage: icon(for: version.type),
-            badge: typeLabel(version.type),
-            accessory: AnyView(statusAccessory(for: version))
-        )
-    }
-
-    /// 行内状态：安装中显示真实进度；已安装显示禁用按钮；其余显示安装按钮。
-    @ViewBuilder
-    private func statusAccessory(for version: VersionSummary) -> some View {
-        if case .downloading(let versionID, let progress) = engine.phase, versionID == version.id {
-            VStack(alignment: .trailing, spacing: LauncherSpace.xxs) {
-                Text(progress.phase)
-                    .textStyle(.micro, tone: .secondary)
-                    .lineLimit(1)
-                LauncherProgressBar(value: progress.fraction)
-                    .frame(width: 120)
-            }
-        } else if installedIDs.contains(version.id) {
-            LauncherButton(
-                "已安装",
-                systemImage: "checkmark",
-                variant: .secondary,
-                size: .small,
-                isDisabled: true
-            ) {}
-        } else {
-            LauncherButton(
-                "安装",
-                systemImage: "arrow.down.circle",
-                variant: .primary,
-                size: .small,
-                isDisabled: engine.isBusy
-            ) {
-                install(version.id)
-            }
+    private var bottomCards: some View {
+        HStack(alignment: .top, spacing: LauncherSpace.md) {
+            diskCard
+                .frame(maxWidth: .infinity)
+            sourceCard
+                .frame(maxWidth: .infinity)
         }
     }
 
-    // MARK: - 分区二：整合包
-
-    private var modpackSection: some View {
-        VStack(alignment: .leading, spacing: LauncherSpace.md) {
-            LauncherSectionHeader(
-                title: "整合包",
-                subtitle: "\(modpacks.count) 个整合包 · 安装过程为页面内演示",
-                accessory: AnyView(
-                    LauncherButton(
-                        "导入整合包",
-                        systemImage: "shippingbox",
-                        variant: .secondary,
-                        size: .small
-                    ) {
-                        showImportHint()
-                    }
+    private var diskCard: some View {
+        LauncherCard(level: .regular, padding: LauncherSpace.md) {
+            VStack(alignment: .leading, spacing: LauncherSpace.xs) {
+                LauncherSectionHeader(
+                    title: "磁盘占用",
+                    subtitle: "游戏目录所在卷",
+                    accessory: AnyView(
+                        LauncherBadge("\(engine.installedVersions.count) 个版本", tone: .neutral)
+                    )
                 )
-            )
+                LauncherProgressBar(value: volumeUsedFraction, label: "可用 \(volumeFreeText)", height: 4)
+                HStack(spacing: LauncherSpace.md) {
+                    LauncherInlineStat("卷容量", value: volumeTotalText, isMono: true)
+                    Spacer(minLength: LauncherSpace.sm)
+                    LauncherButton(
+                        isRefreshingInstalled ? "刷新中" : "刷新",
+                        systemImage: "arrow.clockwise",
+                        variant: .ghost,
+                        size: .small,
+                        isLoading: isRefreshingInstalled
+                    ) {
+                        refreshInstalled()
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var sourceCard: some View {
+        LauncherCard(level: .regular, padding: LauncherSpace.md) {
+            VStack(alignment: .leading, spacing: LauncherSpace.xs) {
+                LauncherSectionHeader(title: "下载源", subtitle: sourceDetail)
+                LauncherDropdown(
+                    options: sourceOptions,
+                    selection: sourceBinding,
+                    placeholder: "选择下载源"
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: - 整合包 / 未接入分区
+
+    private var modpackMain: some View {
+        VStack(alignment: .leading, spacing: LauncherSpace.md) {
+            LauncherPanelHeader(
+                "整合包",
+                subtitle: "\(modpacks.count) 个演示整合包 · 真实安装暂未接入"
+            ) {
+                LauncherButton(
+                    "导入整合包",
+                    systemImage: "shippingbox",
+                    variant: .secondary,
+                    size: .small
+                ) {
+                    showImportHint()
+                }
+            }
 
             LazyVGrid(
                 columns: Array(repeating: GridItem(.flexible(), spacing: LauncherSpace.md), count: 3),
@@ -380,156 +625,45 @@ public struct DownloadPage: View {
         }
     }
 
-    // MARK: - 分区三：下载任务（真实安装进度）
-
-    private var taskSection: some View {
-        HStack(alignment: .top, spacing: LauncherSpace.md) {
-            currentTaskCard
+    private var unsupportedMain: some View {
+        VStack(alignment: .leading, spacing: LauncherSpace.md) {
+            LauncherPanelHeader(
+                category.title,
+                subtitle: "社区资源 · 当前版本暂未接入"
+            )
+            LauncherCard(level: .regular, padding: LauncherSpace.lg) {
+                LauncherEmptyState(
+                    systemImage: category.systemImage,
+                    title: "\(category.title)暂未接入",
+                    message: "当前启动器只支持安装 Minecraft 原版版本，社区资源下载仍在开发中。",
+                    actionTitle: "浏览正式版",
+                    onAction: { selectCategory(.release) }
+                )
                 .frame(maxWidth: .infinity)
-
-            VStack(spacing: LauncherSpace.md) {
-                diskCard
-                sourceCard
             }
-            .frame(width: 280)
         }
     }
 
-    private var currentTaskCard: some View {
-        LauncherCard(level: .regular, padding: LauncherSpace.md) {
-            VStack(alignment: .leading, spacing: LauncherSpace.md) {
-                LauncherSectionHeader(
-                    title: "当前安装任务",
-                    subtitle: taskSubtitle,
-                    accessory: AnyView(LauncherBadge(taskBadgeText, tone: taskBadgeTone))
-                )
-
-                taskBody
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    @ViewBuilder
-    private var taskBody: some View {
-        switch engine.phase {
-        case .downloading(let versionID, let progress):
-            VStack(alignment: .leading, spacing: LauncherSpace.sm) {
-                HStack(spacing: LauncherSpace.sm) {
-                    LauncherMonoText(versionID, tone: .primary, size: 12)
-                    Spacer(minLength: LauncherSpace.sm)
-                    LauncherMonoText(
-                        "\(progress.completed) / \(progress.total) 个文件",
-                        tone: .tertiary,
-                        size: 10
-                    )
-                }
-                LauncherProgressBar(value: progress.fraction, label: progress.phase)
-                HStack(spacing: LauncherSpace.xs) {
-                    LauncherStatusDot(tone: .warning)
-                    Text("真实下载中 · 耗时取决于网络，请勿退出启动器")
-                        .textStyle(.micro, tone: .tertiary)
-                        .lineLimit(2)
-                }
-            }
-        case .preparing(let message):
-            VStack(alignment: .leading, spacing: LauncherSpace.sm) {
-                Text(message)
-                    .textStyle(.body, tone: .secondary)
-                LauncherProgressBar(label: "准备中…")
-            }
-        case .failed(let message):
-            LauncherBanner(
-                title: "安装任务失败",
-                message: message,
-                tone: .danger,
-                actionTitle: lastInstallID == nil ? nil : "重试",
-                onAction: {
-                    if let lastInstallID { install(lastInstallID) }
-                }
-            )
-        default:
-            LauncherEmptyState(
-                systemImage: "arrow.down.circle",
-                title: "当前没有安装任务",
-                message: engine.installedVersions.isEmpty
-                    ? "去版本库挑选一个版本开始安装。"
-                    : "已安装 \(engine.installedVersions.count) 个版本，可以继续安装其他版本。",
-                actionTitle: "去版本库",
-                onAction: {
-                    withAnimation(LauncherMotion.spring) { section = "versions" }
-                }
-            )
-            .frame(maxWidth: .infinity)
-        }
-    }
-
-    private var diskCard: some View {
-        LauncherCard(level: .regular, padding: LauncherSpace.md) {
-            VStack(alignment: .leading, spacing: LauncherSpace.sm) {
-                LauncherSectionHeader(
-                    title: "磁盘占用",
-                    subtitle: "游戏目录所在卷",
-                    accessory: AnyView(
-                        LauncherBadge("\(engine.installedVersions.count) 个版本", tone: .neutral)
-                    )
-                )
-
-                LauncherProgressBar(value: volumeUsedFraction, label: "可用 \(volumeFreeText)")
-
-                LauncherKeyValueRow(key: "卷容量", value: volumeTotalText)
-                LauncherKeyValueRow(key: "游戏目录", value: gameDirectorySummary)
-
-                LauncherButton(
-                    isRefreshingInstalled ? "刷新中…" : "刷新已安装",
-                    systemImage: "arrow.clockwise",
-                    variant: .secondary,
-                    size: .small,
-                    isLoading: isRefreshingInstalled,
-                    isFullWidth: true
-                ) {
-                    refreshInstalled()
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var sourceCard: some View {
-        LauncherCard(level: .regular, padding: LauncherSpace.md) {
-            VStack(alignment: .leading, spacing: LauncherSpace.sm) {
-                LauncherSectionHeader(title: "下载源", subtitle: sourceDetail)
-
-                LauncherDropdown(
-                    options: sourceOptions,
-                    selection: sourceBinding,
-                    placeholder: "选择下载源"
-                )
-
-                LauncherToggle(
-                    "自动清理旧版本",
-                    isOn: autoCleanBinding,
-                    subtitle: "安装完成后清理旧版本文件"
-                )
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    // MARK: - 版本数据
+    // MARK: - 清单数据
 
     private var installedIDs: Set<String> {
         Set(engine.installedVersions.map(\.id))
     }
 
-    /// 筛选 + 搜索 + 排序后的版本。
-    private var filteredVersions: [VersionSummary] {
-        guard let manifest else { return [] }
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    /// 当前分类的版本（按 type 过滤 → 搜索 → 排序）。
+    private var typeVersions: [VersionSummary] {
+        guard let manifest, category.isMinecraft else { return [] }
         var items = manifest.versions.filter { version in
-            guard typeFilter.matches(version.type) else { return false }
-            guard !query.isEmpty else { return true }
-            return version.id.lowercased().contains(query)
+            switch category {
+            case .release: return version.type == "release"
+            case .snapshot: return version.type == "snapshot"
+            case .legacy: return version.type.hasPrefix("old_")
+            default: return false
+            }
+        }
+
+        if !searchText.isEmpty {
+            items = items.filter { $0.id.localizedCaseInsensitiveContains(searchText) }
         }
 
         switch sortMode {
@@ -548,21 +682,67 @@ public struct DownloadPage: View {
         return items
     }
 
-    /// 截断后的展示列表，保证最小窗口不滚动。
+    /// 左面板截断展示（最小窗口不溢出）。
     private var displayedVersions: [VersionSummary] {
-        Array(filteredVersions.prefix(maxVisibleVersions))
+        Array(typeVersions.prefix(maxVisibleVersions))
     }
 
-    private var versionListSubtitle: String {
-        guard let manifest else { return "正在加载清单" }
-        if displayedVersions.count < filteredVersions.count {
-            return "Mojang 清单 \(manifest.versions.count) 个 · 当前筛选 \(filteredVersions.count) 个 · 已安装 \(installedIDs.count) 个"
+    private var selectedVersion: VersionSummary? {
+        guard category.isMinecraft else { return nil }
+        if let selectedVersionID,
+           let match = typeVersions.first(where: { $0.id == selectedVersionID }) {
+            return match
         }
-        return "当前筛选 \(filteredVersions.count) 个 · 已安装 \(installedIDs.count) 个"
+        return typeVersions.first
     }
 
-    private var sortOptions: [LauncherSegment<VersionSort>] {
-        VersionSort.allCases.map { LauncherSegment(id: $0, title: $0.rawValue) }
+    private var sortMenuGroups: [LauncherMenuGroup] {
+        [
+            LauncherMenuGroup(items: VersionSort.allCases.map { sort in
+                LauncherMenuItem(
+                    sort.rawValue,
+                    systemImage: sortMode == sort ? "checkmark" : "arrow.up.arrow.down",
+                    action: { sortMode = sort }
+                )
+            })
+        ]
+    }
+
+    private func moreMenuGroups(for version: VersionSummary) -> [LauncherMenuGroup] {
+        [
+            LauncherMenuGroup(items: [
+                LauncherMenuItem("复制版本号", systemImage: "doc.on.doc", action: {
+                    copyVersionID(version.id)
+                }),
+                LauncherMenuItem("打开版本列表", systemImage: "folder", action: {
+                    NSWorkspace.shared.open(engine.settings.resolvedGameDirectory)
+                }),
+                LauncherMenuItem("刷新清单", systemImage: "arrow.clockwise", action: {
+                    refreshAll()
+                })
+            ])
+        ]
+    }
+
+    private func contextMenuGroups(for version: VersionSummary) -> [LauncherMenuGroup] {
+        [
+            LauncherMenuGroup(items: [
+                LauncherMenuItem(
+                    installedIDs.contains(version.id) ? "已安装" : "安装此版本",
+                    systemImage: "arrow.down.circle",
+                    isDisabled: engine.isBusy || installedIDs.contains(version.id),
+                    action: { startInstall(version.id) }
+                )
+            ]),
+            LauncherMenuGroup(items: [
+                LauncherMenuItem("复制版本号", systemImage: "doc.on.doc", action: {
+                    copyVersionID(version.id)
+                }),
+                LauncherMenuItem("打开文件夹", systemImage: "folder", action: {
+                    NSWorkspace.shared.open(engine.settings.resolvedGameDirectory)
+                })
+            ])
+        ]
     }
 
     private func releaseDate(_ text: String) -> String {
@@ -587,7 +767,21 @@ public struct DownloadPage: View {
         }
     }
 
-    // MARK: - 下载源与磁盘数据
+    // MARK: - 安装状态
+
+    private func isDownloading(_ versionID: String) -> Bool {
+        if case .downloading(let current, _) = engine.phase { return current == versionID }
+        return false
+    }
+
+    private func downloadingProgress(_ versionID: String) -> InstallProgress? {
+        if case .downloading(let current, let progress) = engine.phase, current == versionID {
+            return progress
+        }
+        return nil
+    }
+
+    // MARK: - 下载源与磁盘
 
     private var sourceOptions: [LauncherSegment<String>] {
         [
@@ -603,25 +797,12 @@ public struct DownloadPage: View {
         )
     }
 
-    private var autoCleanBinding: Binding<Bool> {
-        Binding(
-            get: { engine.settings.autoCleanOldVersions },
-            set: { engine.settings.autoCleanOldVersions = $0 }
-        )
-    }
-
     private var sourceDetail: String {
         engine.settings.downloadSource == "mirror"
             ? "镜像源 · 已写入启动器设置"
             : "官方源 · 已写入启动器设置"
     }
 
-    private var gameDirectorySummary: String {
-        let name = engine.settings.resolvedGameDirectory.lastPathComponent
-        return name.isEmpty ? engine.settings.resolvedGameDirectory.path : "…/\(name)"
-    }
-
-    /// 磁盘卷信息（真实文件系统，同步读取很快）。
     private var volumeInfo: (free: String, total: String, usedFraction: Double) {
         let directory = engine.settings.resolvedGameDirectory
         guard
@@ -645,36 +826,19 @@ public struct DownloadPage: View {
     private var volumeTotalText: String { volumeInfo.total }
     private var volumeUsedFraction: Double { volumeInfo.usedFraction }
 
-    // MARK: - 任务状态文案
-
-    private var taskSubtitle: String {
-        switch engine.phase {
-        case .downloading: return "真实下载 · 文件进度实时更新"
-        case .preparing: return "正在准备安装环境"
-        case .failed: return "上次任务失败"
-        default: return engine.installedVersions.isEmpty ? "尚未安装任何版本" : "空闲"
-        }
-    }
-
-    private var taskBadgeText: String {
-        switch engine.phase {
-        case .downloading: return "下载中"
-        case .preparing: return "准备中"
-        case .failed: return "失败"
-        default: return "空闲"
-        }
-    }
-
-    private var taskBadgeTone: LauncherBadgeTone {
-        switch engine.phase {
-        case .downloading: return .accent
-        case .preparing: return .warning
-        case .failed: return .danger
-        default: return .neutral
-        }
-    }
-
     // MARK: - 交互
+
+    private func selectCategory(_ newCategory: DownloadCategory) {
+        withAnimation(LauncherMotion.spring) {
+            category = newCategory
+            selectedVersionID = nil
+        }
+    }
+
+    private func copyVersionID(_ versionID: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(versionID, forType: .string)
+    }
 
     /// 读取版本清单（优先 12 小时磁盘缓存，forceRefresh 时强制联网）。
     private func loadManifest(forceRefresh: Bool = false) async {
@@ -711,19 +875,12 @@ public struct DownloadPage: View {
         }
     }
 
-    /// 调用真实安装：进度由 engine.phase 驱动，安装完成后 engine 会自动刷新已安装列表。
-    private func install(_ versionID: String) {
+    /// 调用真实安装：进度由 engine.phase 驱动，安装完成后 engine 自动刷新已安装列表。
+    private func startInstall(_ versionID: String) {
         guard !engine.isBusy else { return }
         lastInstallID = versionID
         Task { @MainActor in
             await engine.install(versionID: versionID)
-        }
-    }
-
-    private func resetFilters() {
-        withAnimation(LauncherMotion.spring) {
-            searchText = ""
-            typeFilter = .all
         }
     }
 
@@ -768,25 +925,61 @@ public struct DownloadPage: View {
     }
 }
 
-// MARK: - 页面内选项枚举
+// MARK: - 分类与排序
 
-/// 版本类型筛选：全部 / 正式版 / 快照 / 远古版本。
-private enum VersionTypeFilter: String, CaseIterable, Identifiable {
-    case all = "全部"
-    case release = "正式版"
-    case snapshot = "快照"
-    case legacy = "远古版"
+/// 下载页左侧分类：Minecraft 三类 + 社区资源六类。
+private enum DownloadCategory: String, CaseIterable, Identifiable {
+    case release
+    case snapshot
+    case legacy
+    case modpack
+    case mod
+    case resourcepack
+    case shader
+    case world
+    case datapack
 
     var id: String { rawValue }
 
-    func matches(_ type: String) -> Bool {
+    var title: String {
         switch self {
-        case .all: return true
-        case .release: return type == "release"
-        case .snapshot: return type == "snapshot"
-        case .legacy: return type.hasPrefix("old_")
+        case .release: return "正式版"
+        case .snapshot: return "快照"
+        case .legacy: return "远古版"
+        case .modpack: return "整合包"
+        case .mod: return "模组"
+        case .resourcepack: return "资源包"
+        case .shader: return "光影包"
+        case .world: return "世界"
+        case .datapack: return "数据包"
         }
     }
+
+    var systemImage: String {
+        switch self {
+        case .release: return "cube.fill"
+        case .snapshot: return "flask"
+        case .legacy: return "shippingbox.fill"
+        case .modpack: return "shippingbox"
+        case .mod: return "puzzlepiece.extension.fill"
+        case .resourcepack: return "paintpalette.fill"
+        case .shader: return "sparkles"
+        case .world: return "globe"
+        case .datapack: return "doc.zipper"
+        }
+    }
+
+    var isMinecraft: Bool {
+        switch self {
+        case .release, .snapshot, .legacy: return true
+        default: return false
+        }
+    }
+
+    static let minecraftTypes: [DownloadCategory] = [.release, .snapshot, .legacy]
+    static let communityResources: [DownloadCategory] = [
+        .modpack, .mod, .resourcepack, .shader, .world, .datapack
+    ]
 }
 
 /// 版本列表排序方式。

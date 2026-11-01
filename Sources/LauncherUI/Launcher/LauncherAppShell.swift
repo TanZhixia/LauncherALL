@@ -44,14 +44,14 @@ public struct LauncherAppShell: View {
     // MARK: - 顶部导航栏
 
     private func topBar(theme: LauncherTheme) -> some View {
-        HStack(spacing: LauncherSpace.md) {
+        HStack(spacing: LauncherSpace.sm) {
             brand(theme: theme)
                 .padding(.leading, 78) // 让出 macOS 红绿灯
 
             Rectangle()
                 .fill(theme.colors.stroke)
-                .frame(width: 1, height: 18)
-                .padding(.horizontal, LauncherSpace.xxs)
+                .frame(width: 1, height: 16)
+                .padding(.horizontal, LauncherSpace.xs)
 
             HStack(spacing: LauncherSpace.xxs) {
                 ForEach(LauncherTab.allCases) { tab in
@@ -61,15 +61,6 @@ public struct LauncherAppShell: View {
                         }
                     }
                 }
-            }
-            .padding(3)
-            .background {
-                RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
-                    .fill(theme.colors.surfaceSubtle)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
-                            .strokeBorder(theme.colors.stroke, lineWidth: 1)
-                    )
             }
 
             Spacer(minLength: LauncherSpace.md)
@@ -91,7 +82,7 @@ public struct LauncherAppShell: View {
             }
         }
         .padding(.horizontal, LauncherSpace.lg)
-        .frame(height: 56)
+        .frame(height: 48)
         .background(theme.colors.surfaceElevated)
     }
 
