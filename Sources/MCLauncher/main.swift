@@ -9,10 +9,10 @@ struct MCLauncherApp: App {
 
     var body: some Scene {
         WindowGroup("方块启动器") {
-            LauncherShellView()
+            LauncherAppShell()
                 .launcherThemeEnvironment(themeManager)
-                .frame(minWidth: 1120, minHeight: 720)
-                .background { WindowConfigurator() }
+                .frame(minWidth: 1080, minHeight: 720)
+                .background { LauncherWindowConfigurator() }
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
@@ -30,6 +30,10 @@ let exitCode: Int32 = MainActor.assumeIsolated {
     if let index = arguments.firstIndex(of: "--export-snapshots") {
         let output = index + 1 < arguments.count ? arguments[index + 1] : "Snapshots"
         return SnapshotExporter.run(outputDir: output)
+    }
+    if let index = arguments.firstIndex(of: "--export-app-snapshots") {
+        let output = index + 1 < arguments.count ? arguments[index + 1] : "Snapshots/App"
+        return AppSnapshotExporter.run(outputDir: output)
     }
     if let index = arguments.firstIndex(of: "--export-xml-snapshots") {
         let output = index + 1 < arguments.count ? arguments[index + 1] : "Snapshots/XML"

@@ -136,3 +136,10 @@ public struct LauncherPageHeader<Content: View>: View {
         }
     }
 }
+
+public extension LauncherPageHeader where Content == EmptyView {
+    /// 没有右侧操作时的简便构造。
+    init(title: String, subtitle: String? = nil) {
+        self.init(title: title, subtitle: subtitle) { EmptyView() }
+    }
+}

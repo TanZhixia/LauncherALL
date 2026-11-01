@@ -1,7 +1,7 @@
-# 方块启动器 · Minecraft Launcher UI Kit（SwiftUI）
+# 方块启动器 · Minecraft Launcher（SwiftUI UI 实现）
 
-一套用 **Swift 6 / SwiftUI** 写的 Minecraft 启动器 **UI 模板**：极简平面化设计令牌 + 一深一浅两套主题 + 30 多个控件 + 可视化组件画廊。
-本仓库当前只做 **UI 层**（不含版本解析、资源下载、Java 检测、账户认证等启动逻辑），用于先把视觉与组件系统定稿。
+一套用 **Swift 6 / SwiftUI** 写的 Minecraft 启动器：**顶部导航（启动 / 下载 / 设置 / 更多）** + 极简平面化设计系统（一深一浅两套主题）+ 30 多个控件 + XML 声明式 UI 层。
+本仓库当前只做 **UI 层**（不含版本解析、资源下载、Java 检测、账户认证等启动逻辑），所有交互为 UI 级演示。
 
 ## 快速开始
 
@@ -12,13 +12,24 @@ swift run MCLauncher
 # 或用 Xcode 打开 SPM 包，跑 MCLauncher scheme
 open Package.swift
 
-# 离屏导出深/浅两套主题 × 8 个页面的截图（无显示器环境也可用）
+# 离屏导出：启动器主界面（2 主题 × 4 导航页）
+swift run MCLauncher --export-app-snapshots Snapshots/App
+
+# 离屏导出：设计系统画廊（2 主题 × 9 页）
 swift run MCLauncher --export-snapshots Snapshots
 python3 tools/make_contact_sheet.py   # 需要 Pillow，生成对比图
 ```
 
-启动后左侧是页面导航（主题工作台 / 按钮 / 输入 / 选择 / 容器 / 反馈 / 导航 / 实战样张）；
-侧栏底部两个圆点可即时切换深/浅主题；「主题工作台」里能调边框强度与圆角缩放。
+主界面顶部是四个导航页（⌘1~⌘4 切换）：
+
+| 页面 | 内容 |
+|---|---|
+| **启动** | 当前实例封面 / 版本与模组信息 / 启动按钮，快速开始、实例列表，右侧账户、服务器状态、公告、Java 提示 |
+| **下载** | 搜索 + 类型筛选 + 排序，版本 / 加载器 / 整合包列表（安装进度模拟），下载队列、磁盘占用、下载源设置 |
+| **设置** | 启动行为、Java 运行时、内存与渲染线程、更新通道与语言、外观（主题 / 边框强度 / 圆角）、账户、关于 |
+| **更多** | 工具卡（日志、备份、模组、截图、社区、关于）、快捷操作、快捷键、版本信息 |
+
+顶栏右侧可一键切换深/浅主题；「更多 → 打开设计系统」会以 sheet 打开组件画廊与主题工作台。
 
 ## 设计取向
 
@@ -31,20 +42,28 @@ python3 tools/make_contact_sheet.py   # 需要 Pillow，生成对比图
 
 ```
 Sources/
-  LauncherUI/                 # 设计系统 + 组件库（可复用到正式产品）
+  LauncherUI/                 # 设计系统 + 组件库 + 启动器界面
     Core/                     # 令牌、主题、排版、面板、动效、页面骨架
     Components/               # 按钮 / 输入 / 选择 / 容器 / 反馈 / 导航
-    Gallery/                  # 组件画廊页（本模板的可视化验收页）
-    Shell/                    # 侧栏外壳 + 窗口配置
-  MCLauncher/                 # 可执行 App 入口 + 离屏截图导出器
+    Launcher/                 # ★ 启动器主界面：外壳、导航栏、共享数据与四个页面
+    Gallery/                  # 组件画廊 + 主题工作台 + XML 设计器
+    Shell/                    # 画廊侧栏外壳
+    XML/                      # XML UI 引擎（解析 / 状态 / 动作 / 渲染）
+  MCLauncher/                 # 可执行 App 入口 + 各截图导出器 + CLI 工具
 docs/
   DESIGN-SYSTEM.md            # 设计系统说明（令牌 / 主题 / 规范 / 检查清单）
-  API-CONTRACT.md             # 组件 API 契约（并行开发时的唯一事实来源）
+  APP-UI.md                   # 启动器主界面结构、页面契约与演示数据
+  XML-UI.md                   # XML UI 语言完整语法
+  API-CONTRACT.md             # 组件 API 契约
 Snapshots/                    # 导出的主题 × 页面效果图 + 对比图（生成产物，已 gitignore）
 tools/make_contact_sheet.py   # 生成主题对比图（Pillow）
 ```
 
-## 效果预览
+## 效果预览（启动器主界面）
+
+`Snapshots/App/` 下是 2 套主题 × 4 个导航页的离屏渲染图；`Snapshots/sheet-app.png` 是四页对照图。
+
+## 效果预览（设计系统）
 
 `Snapshots/` 下是 **2 套主题 × 8 个页面** 的离屏渲染图，另附交付用对比图：
 

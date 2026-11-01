@@ -83,6 +83,42 @@ def sheet_xml():
     canvas.save(out, optimize=True)
     print(f"wrote {out.relative_to(ROOT)}  {canvas.size}")
 
+APP_TABS = [
+    ("launch", "启动"),
+    ("download", "下载"),
+    ("settings", "设置"),
+    ("more", "更多"),
+]
+
+def sheet_app():
+    """启动器主界面：4 个导航页 × 深/浅两套主题。"""
+    folder = SNAP / "App"
+    if not folder.exists():
+        print("skip app sheet: Snapshots/App 不存在")
+        return
+    pad, label_h = 12, 30
+    img0 = Image.open(folder / "app-graphite-launch.png")
+    cell_w = 500
+    cell_h = int(cell_w * img0.height / img0.width)
+    title_h = 58
+    canvas = Image.new("RGB", (4 * cell_w + 5 * pad, 2 * (cell_h + label_h) + 3 * pad + title_h), (10, 11, 13))
+    draw = ImageDraw.Draw(canvas)
+    f_title, f_label = load_font(26), load_font(17)
+    draw.text((pad, pad + 6), "方块启动器 · 启动 / 下载 / 设置 / 更多（深色 + 浅色）", font=f_title, fill=(238, 240, 243))
+    for row, (theme_id, theme_name) in enumerate([("graphite", "深色"), ("porcelain", "浅色")]):
+        for col, (tab_id, tab_name) in enumerate(APP_TABS):
+            path = folder / f"app-{theme_id}-{tab_id}.png"
+            if not path.exists():
+                continue
+            x = pad + col * (cell_w + pad)
+            y = title_h + pad + row * (cell_h + label_h + pad)
+            img = Image.open(path).convert("RGB").resize((cell_w, cell_h), Image.LANCZOS)
+            canvas.paste(img, (x, y))
+            draw.text((x + 2, y + cell_h + 6), f"{tab_name} · {theme_name}", font=f_label, fill=(186, 192, 200))
+    out = SNAP / "sheet-app.png"
+    canvas.save(out, optimize=True)
+    print(f"wrote {out.relative_to(ROOT)}  {canvas.size}")
+
 if __name__ == "__main__":
     sheet("demo", title="方块启动器 · 同一套 UI 的深色 / 浅色主题（Minecraft Launcher UI Kit）", out_name="sheet-themes-demo.png")
     sheet("studio", title="主题工作台 · 一深一浅，只换色不换结构", out_name="sheet-themes-studio.png")
@@ -92,3 +128,4 @@ if __name__ == "__main__":
     sheet("surfaces", title="容器与列表 · 三层面板 / ListRow / EmptyState", out_name="sheet-surfaces.png")
     sheet("feedback", title="反馈与状态 · 进度 / 加载 / 骨架屏 / 横幅 / Toast", out_name="sheet-feedback.png")
     sheet_xml()
+    sheet_app()
