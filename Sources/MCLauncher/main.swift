@@ -31,6 +31,23 @@ let exitCode: Int32 = MainActor.assumeIsolated {
         let output = index + 1 < arguments.count ? arguments[index + 1] : "Snapshots"
         return SnapshotExporter.run(outputDir: output)
     }
+    if let index = arguments.firstIndex(of: "--export-xml-snapshots") {
+        let output = index + 1 < arguments.count ? arguments[index + 1] : "Snapshots/XML"
+        return XMLTool.exportSnapshots(directory: output)
+    }
+    if arguments.contains("--list-xml-samples") {
+        return XMLTool.listSamples()
+    }
+    if let index = arguments.firstIndex(of: "--validate-xml") {
+        guard index + 1 < arguments.count else {
+            print("用法：--validate-xml <file>")
+            return 2
+        }
+        return XMLTool.validate(path: arguments[index + 1])
+    }
+    if let index = arguments.firstIndex(of: "--render-xml") {
+        return XMLTool.render(arguments: arguments, startIndex: index + 1)
+    }
     MCLauncherApp.main()
     return 0
 }

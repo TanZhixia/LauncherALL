@@ -1,0 +1,219 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  启动器首屏：对齐 LauncherDemoPage 的信息结构
+  顶部账户条 + 左侧主区（当前实例 / 实例列表 / 下载任务）+ 右侧栏（账户 / 服务器 / 新闻 / 提示）
+-->
+<ui title="启动器首屏">
+  <state>
+    <bool name="isLaunching" value="false"/>
+    <string name="launchStatus" value="已就绪 · 上次退出正常"/>
+    <int name="progress" value="68"/>
+    <bool name="showAdvanced" value="false"/>
+    <string name="username" value="Steve_2026"/>
+    <string name="channel" value="release"/>
+    <string name="search" value=""/>
+    <bool name="toastVisible" value="false"/>
+    <bool name="skipVerify" value="false"/>
+    <string name="instanceName" value="1.21.4 · Fabric 0.16.9"/>
+  </state>
+  <actions>
+    <action name="launch"/>
+    <action name="install"/>
+  </actions>
+
+  <vstack spacing="lg" padding="xl">
+
+    <!-- 1. 顶部账户条 -->
+    <panel level="regular" radius="lg" spacing="sm">
+      <hstack spacing="md">
+        <avatar name="{state.username}" size="44" online="true"/>
+        <vstack spacing="xxs" align="leading">
+          <text style="headline" content="{state.username}"/>
+          <hstack spacing="xs">
+            <statusdot tone="success" pulsing="true"/>
+            <text style="micro" tone="secondary">微软账户 · 正版 · 在线</text>
+          </hstack>
+        </vstack>
+        <spacer min-length="lg"/>
+        <badge text="2 个任务下载中" tone="info" icon="arrow.down.circle"/>
+        <iconbutton icon="gearshape.fill" label="设置" onTap="toggle:showAdvanced"/>
+        <iconbutton icon="bell.fill" label="通知" onTap="toggle:toastVisible"/>
+        <iconbutton icon="questionmark.circle.fill" label="帮助"/>
+      </hstack>
+    </panel>
+
+    <!-- 2. 主区 + 右侧栏 -->
+    <hstack spacing="lg" align="top">
+
+      <!-- 2.1 左侧：当前实例 / 实例列表 / 下载任务 -->
+      <vstack spacing="md" full-width="true">
+
+        <!-- 当前实例大卡 -->
+        <panel level="regular" radius="xl" spacing="md">
+          <hstack spacing="sm">
+            <label tone="tertiary">当前实例</label>
+            <spacer/>
+            <badge text="Fabric" tone="info"/>
+            <badge text="Java 21" tone="neutral" icon="cup.and.saucer.fill"/>
+          </hstack>
+          <vstack spacing="xs" align="leading">
+            <text style="title">1.21.4 · Fabric 0.16.9</text>
+            <text style="micro" tone="tertiary">上次游玩 今天 14:32 · 214 个模组 · 已游玩 128 小时</text>
+          </vstack>
+          <divider full-width="true"/>
+          <grid columns="4" spacing="sm">
+            <keyvalue key="游戏版本" value="1.21.4"/>
+            <keyvalue key="加载器" value="Fabric 0.16.9"/>
+            <keyvalue key="内存分配" value="4.0 GB / 16.0 GB"/>
+            <keyvalue key="存档数量" value="7 个世界"/>
+          </grid>
+          <hstack spacing="md">
+            <button title="开始游戏" icon="play.fill" variant="primary" size="large"
+                    loading="{state.isLaunching}" shortcut="⌘↩" onTap="launch"/>
+            <button title="选择版本" icon="list.bullet.rectangle" variant="secondary" size="large"
+                    onTap="toggle:showAdvanced"/>
+            <spacer/>
+            <mono content="{state.launchStatus}" tone="accent"/>
+          </hstack>
+          <if test="{state.showAdvanced}">
+            <panel level="subtle" radius="md" spacing="sm">
+              <sectionheader title="高级启动选项" subtitle="仅本次启动生效，不会写入实例配置"/>
+              <grid columns="2" spacing="sm">
+                <keyvalue key="JVM 参数" value="-Xmx4G -XX:+UseG1GC"/>
+                <keyvalue key="游戏窗口" value="1280 × 720"/>
+                <keyvalue key="Java 运行时" value="Temurin 21.0.4"/>
+                <keyvalue key="更新通道" value="{state.channel}"/>
+              </grid>
+              <checkbox title="跳过资源完整性校验" bind="skipVerify"/>
+            </panel>
+          </if>
+        </panel>
+
+        <!-- 版本 / 实例列表 -->
+        <card level="regular" spacing="sm">
+          <hstack spacing="sm">
+            <sectionheader title="版本 / 实例列表" subtitle="按最近游玩排序 · 点击可切换当前实例"/>
+            <spacer/>
+            <badge text="4 个实例" tone="neutral"/>
+          </hstack>
+          <searchfield bind="search" placeholder="搜索实例、加载器或整合包"/>
+          <vstack spacing="xxs">
+            <foreach in="instances" as="inst">
+              <listrow title="{inst.title}" subtitle="{inst.subtitle}" badge="{inst.tag}"
+                       selected="{inst.selected}"/>
+            </foreach>
+          </vstack>
+          <divider full-width="true"/>
+          <hstack spacing="sm">
+            <text style="micro" tone="tertiary">共 4 个实例 · 占用 14.9 GB · 2 个版本可更新</text>
+            <spacer/>
+            <button title="新建实例" icon="plus" variant="ghost" size="small"/>
+          </hstack>
+        </card>
+
+        <!-- 下载任务 -->
+        <card level="regular" spacing="md">
+          <hstack spacing="sm">
+            <sectionheader title="下载任务" subtitle="2 个进行中 · 1 个排队"/>
+            <spacer/>
+            <badge text="Fabric API" tone="info" icon="arrow.down.circle.fill"/>
+          </hstack>
+          <progress value="68" max="100" label="Fabric API 0.100.1 · 下载中" tone="accent"/>
+          <progress value="31" max="100" label="Sodium 0.6.9 · 下载中" tone="success"/>
+          <progress label="正在校验资源索引 · 预计 3 分钟"/>
+          <hstack spacing="sm">
+            <mono content="队列总进度 {state.progress}%" tone="tertiary"/>
+            <spacer/>
+            <button title="继续下载" icon="arrow.down.circle" variant="ghost" size="small" onTap="install"/>
+            <button title="查看全部" variant="secondary" size="small"/>
+          </hstack>
+        </card>
+      </vstack>
+
+      <!-- 2.2 右侧栏：账户 / 服务器 / 新闻 / 提示 -->
+      <vstack spacing="md" width="300">
+
+        <!-- 账户卡 -->
+        <card level="regular" spacing="md">
+          <hstack spacing="sm">
+            <sectionheader title="账户" subtitle="2 个已登录账户"/>
+            <spacer/>
+            <statusdot tone="success" pulsing="true"/>
+          </hstack>
+          <hstack spacing="md">
+            <avatar name="{state.username}" size="44" online="true"/>
+            <vstack spacing="xs" align="leading">
+              <text style="bodyStrong" content="{state.username}"/>
+              <hstack spacing="xs">
+                <badge text="正版" tone="success"/>
+                <text style="micro" tone="secondary">Microsoft 账户</text>
+              </hstack>
+            </vstack>
+          </hstack>
+          <keyvalue key="上次登录" value="今天 09:12"/>
+          <keyvalue key="皮肤" value="Steve 经典"/>
+          <button title="切换账户" icon="arrow.triangle.2.circlepath" variant="secondary" full-width="true"/>
+        </card>
+
+        <!-- 服务器状态 -->
+        <card level="regular" spacing="sm">
+          <hstack spacing="sm">
+            <sectionheader title="服务器状态" subtitle="2 个收藏服务器"/>
+            <spacer/>
+            <badge text="全部在线" tone="success"/>
+          </hstack>
+          <vstack spacing="sm">
+            <foreach in="servers" as="srv">
+              <panel level="subtle" radius="md" spacing="xs">
+                <hstack spacing="sm">
+                  <statusdot tone="success" pulsing="true"/>
+                  <text style="bodyStrong" content="{srv.name}"/>
+                  <spacer/>
+                  <mono content="{srv.ping} ms" tone="tertiary"/>
+                </hstack>
+                <hstack spacing="sm">
+                  <text style="micro" tone="secondary" content="在线 {srv.players} 人"/>
+                  <spacer/>
+                  <text style="micro" tone="tertiary" content="{srv.region}"/>
+                </hstack>
+              </panel>
+            </foreach>
+          </vstack>
+          <keyvalue key="客户端版本" value="1.21.4"/>
+        </card>
+
+        <!-- 新闻与公告 -->
+        <card level="regular" spacing="sm">
+          <hstack spacing="sm">
+            <sectionheader title="新闻与公告" subtitle="来自 Minecraft 官网"/>
+            <spacer/>
+            <iconbutton icon="safari" label="打开官网"/>
+          </hstack>
+          <vstack spacing="sm">
+            <foreach in="news" as="n">
+              <vstack spacing="xxs" align="leading">
+                <hstack spacing="sm">
+                  <badge text="{n.tag}" tone="accent"/>
+                  <spacer/>
+                  <mono content="{n.date}" tone="tertiary"/>
+                </hstack>
+                <text style="bodyStrong" content="{n.title}"/>
+                <text style="micro" tone="secondary" content="{n.summary}"/>
+              </vstack>
+            </foreach>
+          </vstack>
+        </card>
+
+        <!-- 底部提示横幅 -->
+        <banner title="Java 21 已就绪" message="检测到 2 个可更新模组，建议启动前完成更新。"
+                tone="info" action-title="查看详情" onTap="toggle:toastVisible"/>
+      </vstack>
+    </hstack>
+
+    <!-- 浮层轻提示 -->
+    <if test="{state.toastVisible}">
+      <toast title="通知中心" message="2 个模组可更新：Fabric API 0.100.1 与 Sodium 0.6.9。"
+             tone="info" onClose="toggle:toastVisible"/>
+    </if>
+  </vstack>
+</ui>

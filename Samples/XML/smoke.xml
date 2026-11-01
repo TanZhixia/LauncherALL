@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui title="Smoke Test">
+  <state>
+    <bool name="isLaunching" value="false"/>
+    <string name="launchStatus" value="就绪"/>
+    <bool name="showAdvanced" value="true"/>
+  </state>
+  <vstack spacing="lg" padding="xl">
+    <text style="display">XML 渲染引擎</text>
+    <text style="caption" tone="secondary">用标签描述 UI，运行时渲染成 SwiftUI</text>
+    <panel level="regular">
+      <text style="sectionTitle">状态绑定</text>
+      <hstack spacing="md">
+        <mono content="isLaunching={state.isLaunching}" />
+        <mono content="status={state.launchStatus}" />
+      </hstack>
+      <if test="{state.showAdvanced}">
+        <text style="caption" tone="accent">高级选项已展开</text>
+      </if>
+    </panel>
+    <grid columns="2" spacing="md">
+      <foreach in="instances" as="inst">
+        <panel level="subtle" spacing="xs">
+          <hstack spacing="sm">
+            <text style="bodyStrong" content="{inst.title}" />
+            <spacer />
+            <text style="micro" tone="tertiary" content="{inst.size}" />
+          </hstack>
+          <text style="micro" tone="secondary" content="{inst.subtitle}" />
+        </panel>
+      </foreach>
+    </grid>
+  </vstack>
+</ui>

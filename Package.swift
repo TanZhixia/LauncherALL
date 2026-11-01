@@ -12,12 +12,19 @@ let package = Package(
         .target(
             name: "LauncherUI",
             path: "Sources/LauncherUI",
+            resources: [.process("Resources")],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .executableTarget(
             name: "MCLauncher",
             dependencies: ["LauncherUI"],
             path: "Sources/MCLauncher",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
+        .testTarget(
+            name: "LauncherUITests",
+            dependencies: ["LauncherUI"],
+            path: "Tests/LauncherUITests",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
     ]

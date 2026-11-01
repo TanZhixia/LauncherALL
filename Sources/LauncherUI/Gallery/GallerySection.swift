@@ -10,6 +10,7 @@ public enum LauncherGallerySection: String, CaseIterable, Identifiable {
     case feedback
     case navigation
     case demo
+    case xml
 
     public var id: String { rawValue }
 
@@ -23,6 +24,7 @@ public enum LauncherGallerySection: String, CaseIterable, Identifiable {
         case .feedback: return "反馈"
         case .navigation: return "导航"
         case .demo: return "实战样张"
+        case .xml: return "XML 设计器"
         }
     }
 
@@ -36,6 +38,7 @@ public enum LauncherGallerySection: String, CaseIterable, Identifiable {
         case .feedback: return "bell.badge.fill"
         case .navigation: return "sidebar.left"
         case .demo: return "play.rectangle.fill"
+        case .xml: return "chevron.left.forwardslash.chevron.right"
         }
     }
 
@@ -46,6 +49,7 @@ public enum LauncherGallerySection: String, CaseIterable, Identifiable {
         case .buttons, .inputs, .selection: return "控件"
         case .surfaces, .feedback, .navigation: return "容器与页面"
         case .demo: return "实战"
+        case .xml: return "工具"
         }
     }
 
@@ -59,6 +63,7 @@ public enum LauncherGallerySection: String, CaseIterable, Identifiable {
         case .feedback: return AnyView(FeedbackPage())
         case .navigation: return AnyView(NavigationPage())
         case .demo: return AnyView(LauncherDemoPage())
+        case .xml: return AnyView(XMLDesignerPage())
         }
     }
 
@@ -67,6 +72,7 @@ public enum LauncherGallerySection: String, CaseIterable, Identifiable {
         ("设计系统", [.studio]),
         ("控件", [.buttons, .inputs, .selection]),
         ("容器与页面", [.surfaces, .feedback, .navigation]),
-        ("实战", [.demo])
+        ("实战", [.demo]),
+        ("工具", [.xml])
     ]
 }

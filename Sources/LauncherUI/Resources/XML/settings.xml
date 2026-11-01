@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  设置页：账户 / Java 运行时 / 内存分配 / 启动行为 / 更新通道 / 版本目录，
+  底部保存与重置按钮，重置前用 if 控制的 dialog 二次确认。
+-->
+<ui title="设置">
+  <state>
+    <string name="username" value="Steve_2026"/>
+    <string name="javaVersion" value="21"/>
+    <int name="memory" value="4096"/>
+    <int name="threads" value="8"/>
+    <string name="channel" value="release"/>
+    <string name="language" value="zh-Hans"/>
+    <string name="gameDir" value="/Users/steve/Library/Application Support/minecraft"/>
+    <string name="jvmArgs" value="-Xmx4G -XX:+UseG1GC"/>
+    <bool name="autoUpdate" value="true"/>
+    <bool name="keepGameRunning" value="false"/>
+    <bool name="backupSaves" value="true"/>
+    <bool name="uploadLogs" value="true"/>
+    <bool name="showAdvanced" value="false"/>
+    <bool name="showDialog" value="false"/>
+  </state>
+  <actions>
+    <action name="saveSettings"/>
+    <action name="resetSettings"/>
+    <action name="closeDialog"/>
+  </actions>
+
+  <page title="设置" subtitle="账户、Java 运行时、内存分配、更新通道与版本目录">
+
+    <!-- 账户 -->
+    <section title="账户" subtitle="Microsoft 账户 · 正版 · 在线">
+      <panel level="regular" radius="lg" spacing="sm">
+        <hstack spacing="md">
+          <avatar name="{state.username}" size="44" online="true"/>
+          <vstack spacing="xs" align="leading">
+            <text style="bodyStrong" content="{state.username}"/>
+            <hstack spacing="xs">
+              <badge text="正版" tone="success"/>
+              <text style="micro" tone="secondary">Microsoft 账户 · 上次登录 今天 09:12</text>
+            </hstack>
+          </vstack>
+          <spacer min-length="md"/>
+          <button title="切换账户" icon="arrow.triangle.2.circlepath" variant="secondary"/>
+          <button title="退出登录" variant="ghost"/>
+        </hstack>
+      </panel>
+    </section>
+
+    <!-- Java 运行时 -->
+    <section title="Java 运行时" subtitle="启动游戏时使用的 Java，可在实例级别单独覆盖">
+      <vstack spacing="sm">
+        <radiocard title="Java 21（推荐）" subtitle="Temurin 21.0.4 · 支持 1.21.4 及以上版本"
+                   icon="cup.and.saucer.fill" selected="true" onTap="set:javaVersion=21"/>
+        <radiocard title="Java 17" subtitle="Temurin 17.0.12 · 兼容 1.18 ~ 1.20.6"
+                   icon="cup.and.saucer.fill" selected="false" onTap="set:javaVersion=17"/>
+        <radiocard title="使用系统 Java" subtitle="自动检测 /usr/bin/java，版本由系统决定"
+                   icon="desktopcomputer" selected="false" onTap="set:javaVersion=system"/>
+      </vstack>
+      <panel level="subtle" radius="md" spacing="xs">
+        <keyvalue key="当前运行时" value="{state.javaVersion}"/>
+        <keyvalue key="安装路径" value="/Library/Java/JavaVirtualMachines/temurin-21.jdk" mono="false"/>
+      </panel>
+    </section>
+
+    <!-- 内存分配 -->
+    <section title="内存分配" subtitle="内存过小会导致卡顿，过大会拖慢系统">
+      <panel level="regular" radius="lg" spacing="md">
+        <slider bind="memory" min="1024" max="8192" label="最大内存分配" value-text="{state.memory} MB"/>
+        <hstack spacing="sm">
+          <mono content="1024 MB" tone="tertiary"/>
+          <spacer/>
+          <mono content="{state.memory} MB" tone="accent"/>
+          <spacer/>
+          <mono content="8192 MB" tone="tertiary"/>
+        </hstack>
+        <hstack spacing="sm">
+          <text style="micro" tone="secondary">系统总内存 16 GB · 建议为游戏分配 4 ~ 6 GB</text>
+          <spacer/>
+          <button title="恢复推荐值" icon="arrow.counterclockwise" variant="ghost" size="small" onTap="set:memory=4096"/>
+        </hstack>
+        <divider full-width="true"/>
+        <stepper bind="threads" min="1" max="32" label="渲染线程" unit="线程"/>
+      </panel>
+    </section>
+
+    <!-- 启动行为 -->
+    <section title="启动行为" subtitle="影响启动器与游戏进程的交互方式">
+      <grid columns="2" spacing="lg">
+        <toggle title="启动时自动检查更新" subtitle="仅检查正式版与快照" bind="autoUpdate"/>
+        <toggle title="关闭启动器后保持游戏运行" subtitle="由独立的游戏进程托管" bind="keepGameRunning"/>
+        <toggle title="启动前自动备份存档" subtitle="备份到 saves/backup 目录" bind="backupSaves"/>
+        <checkbox title="崩溃后自动上传日志" bind="uploadLogs"/>
+      </grid>
+    </section>
+
+    <!-- 更新通道 -->
+    <section title="更新通道" subtitle="决定启动器与游戏版本的更新来源">
+      <grid columns="2" spacing="md">
+        <vstack spacing="xs" full-width="true">
+          <label>发布通道</label>
+          <segmented bind="channel">
+            <option value="release" title="正式版" icon="checkmark.seal.fill"/>
+            <option value="snapshot" title="快照" icon="flask.fill"/>
+            <option value="beta" title="测试版" icon="hammer.fill"/>
+          </segmented>
+        </vstack>
+        <vstack spacing="xs" full-width="true">
+          <label>界面语言</label>
+          <dropdown bind="language" placeholder="选择界面语言">
+            <option value="zh-Hans" title="简体中文"/>
+            <option value="zh-Hant" title="繁體中文"/>
+            <option value="en" title="English"/>
+          </dropdown>
+        </vstack>
+      </grid>
+      <hstack spacing="sm">
+        <mono content="当前通道 {state.channel}" tone="tertiary"/>
+        <spacer/>
+        <text style="micro" tone="tertiary">快照通道可能包含未完成的内容，稳定性较低</text>
+      </hstack>
+    </section>
+
+    <!-- 版本目录 -->
+    <section title="版本目录" subtitle="实例、存档与资源文件都保存在此目录">
+      <grid columns="2" spacing="md">
+        <vstack spacing="xs" full-width="true">
+          <label>游戏目录</label>
+          <textfield placeholder="选择或输入游戏目录" bind="gameDir" icon="folder.fill"
+                     helper="修改后需要重启启动器才会生效"/>
+        </vstack>
+        <vstack spacing="xs" full-width="true">
+          <label>JVM 参数</label>
+          <textfield placeholder="-Xmx4G -XX:+UseG1GC" bind="jvmArgs" icon="terminal.fill"
+                     helper="高级参数，错误配置可能导致启动失败"/>
+        </vstack>
+      </grid>
+      <hstack spacing="sm">
+        <checkbox title="显示高级 JVM 参数" bind="showAdvanced"/>
+        <spacer/>
+        <mono content="占用 14.9 GB · 剩余 128 GB" tone="tertiary"/>
+      </hstack>
+      <if test="{state.showAdvanced}">
+        <panel level="subtle" radius="md" spacing="xs">
+          <keyvalue key="GC" value="G1（Garbage-First）"/>
+          <keyvalue key="堆外内存" value="512 MB"/>
+          <text style="micro" tone="tertiary">修改 JVM 参数后，请先完整退出游戏再重新启动。</text>
+        </panel>
+      </if>
+    </section>
+
+    <!-- 保存 / 重置 -->
+    <divider full-width="true"/>
+    <hstack spacing="md">
+      <button title="保存设置" icon="checkmark" variant="primary" size="large" onTap="saveSettings"/>
+      <button title="恢复默认" icon="arrow.counterclockwise" variant="secondary" size="large"
+              onTap="toggle:showDialog"/>
+      <spacer/>
+      <mono content="配置版本 v4 · 上次修改 今天 09:41" tone="tertiary"/>
+    </hstack>
+
+    <!-- 重置确认对话框 -->
+    <if test="{state.showDialog}">
+      <dialog title="恢复默认设置"
+              message="将把 Java 运行时、内存分配、更新通道与启动行为恢复为默认值，此操作不可撤销。"
+              primary="恢复默认" secondary="取消" tone="danger"
+              onPrimary="resetSettings" onSecondary="closeDialog"/>
+    </if>
+  </page>
+</ui>

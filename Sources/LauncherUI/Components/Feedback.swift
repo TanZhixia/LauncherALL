@@ -302,7 +302,7 @@ public struct LauncherSkeleton: View {
 
     public var body: some View {
         shape
-            .fill(theme.colors.surfaceHover)
+            .fill(theme.colors.surfaceActive)
             .overlay {
                 if !reduceMotion {
                     GeometryReader { proxy in

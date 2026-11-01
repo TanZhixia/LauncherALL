@@ -47,6 +47,42 @@ def sheet(page, width=1000, title=None, out_name=None):
     canvas.save(out, optimize=True)
     print(f"wrote {out.relative_to(ROOT)}  {canvas.size}")
 
+XML_SAMPLES = [
+    ("launcher", "启动器首屏"),
+    ("components", "控件总览"),
+    ("settings", "设置页"),
+]
+
+def sheet_xml():
+    """XML 示例：3 个界面 × 深/浅两套主题。"""
+    folder = SNAP / "XML"
+    if not folder.exists():
+        print("skip xml sheet: Snapshots/XML 不存在")
+        return
+    pad, label_h = 14, 32
+    img0 = Image.open(folder / "graphite-launcher.png")
+    cell_w = 660
+    cell_h = int(cell_w * img0.height / img0.width)
+    cols, rows = len(XML_SAMPLES), 2
+    title_h = 58
+    canvas = Image.new("RGB", (cols * cell_w + (cols + 1) * pad, rows * (cell_h + label_h) + (rows + 1) * pad + title_h), (10, 11, 13))
+    draw = ImageDraw.Draw(canvas)
+    f_title, f_label = load_font(26), load_font(17)
+    draw.text((pad, pad + 6), "XML 描述的界面 · 同一份 XML 在深色 / 浅色主题下渲染", font=f_title, fill=(238, 240, 243))
+    for row, (theme_id, theme_name) in enumerate([("graphite", "深色 · 石墨"), ("porcelain", "浅色 · 瓷白")]):
+        for col, (sample_id, sample_name) in enumerate(XML_SAMPLES):
+            path = folder / f"{theme_id}-{sample_id}.png"
+            if not path.exists():
+                continue
+            x = pad + col * (cell_w + pad)
+            y = title_h + pad + row * (cell_h + label_h + pad)
+            img = Image.open(path).convert("RGB").resize((cell_w, cell_h), Image.LANCZOS)
+            canvas.paste(img, (x, y))
+            draw.text((x + 2, y + cell_h + 6), f"{sample_name} · {theme_name}", font=f_label, fill=(186, 192, 200))
+    out = SNAP / "sheet-xml.png"
+    canvas.save(out, optimize=True)
+    print(f"wrote {out.relative_to(ROOT)}  {canvas.size}")
+
 if __name__ == "__main__":
     sheet("demo", title="方块启动器 · 同一套 UI 的深色 / 浅色主题（Minecraft Launcher UI Kit）", out_name="sheet-themes-demo.png")
     sheet("studio", title="主题工作台 · 一深一浅，只换色不换结构", out_name="sheet-themes-studio.png")
@@ -55,3 +91,4 @@ if __name__ == "__main__":
     sheet("selection", title="选择控件 · Toggle / Checkbox / RadioCard / Slider", out_name="sheet-selection.png")
     sheet("surfaces", title="容器与列表 · 三层面板 / ListRow / EmptyState", out_name="sheet-surfaces.png")
     sheet("feedback", title="反馈与状态 · 进度 / 加载 / 骨架屏 / 横幅 / Toast", out_name="sheet-feedback.png")
+    sheet_xml()

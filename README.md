@@ -53,8 +53,36 @@ tools/make_contact_sheet.py   # 生成主题对比图（Pillow）
 | `sheet-themes-demo.png` | 同一套启动器首屏在深色 / 浅色主题下的对照（核心验收图） |
 | `sheet-themes-studio.png` | 主题工作台 + 跨主题一致性对照 |
 | `sheet-buttons.png` / `sheet-inputs.png` / `sheet-selection.png` / `sheet-surfaces.png` / `sheet-feedback.png` | 各组控件在深浅主题下的对照 |
+| `sheet-xml.png` | 三份 XML 示例（启动器首屏 / 控件总览 / 设置页）在深浅主题下渲染 + `Snapshots/XML/` 单图 |
+| `graphite-xml.png` / `porcelain-xml.png` | XML 设计器页面（左侧源码 / 右侧实时预览） |
 
 > 说明：截图由 `ImageRenderer` 离屏渲染。平面化后面板是真纯色，与真机一致；仅 AppKit 背书的控件（输入框、下拉菜单）在离屏模式下用同布局静态等价物渲染（`launcherSnapshotMode` 环境开关）。
+
+## XML UI 工具链
+
+除了手写 SwiftUI，项目还提供一套 **XML → SwiftUI** 的声明式 UI 层：把控件封装成 XML 标签，运行时解析渲染，主题/间距/圆角完全复用同一套令牌。
+
+```bash
+# 1) 校验 XML（打印诊断，退出码 0 = 通过）
+swift run MCLauncher --validate-xml Samples/XML/smoke.xml
+
+# 2) 渲染成 PNG（设计评审 / CI 截图）
+swift run MCLauncher --render-xml Samples/XML/smoke.xml out.png --theme porcelain --width 1200 --height 900
+
+# 3) 导出全部内置示例 × 主题
+swift run MCLauncher --export-xml-snapshots Snapshots/XML
+```
+
+App 内在「工具 → XML 设计器」里可以左边改 XML、右边实时预览（含诊断）。
+
+能力概览：
+- 布局：`vstack / hstack / zstack / scroll / grid / spacer / divider / panel / card / section / page / if / foreach`
+- 基础：`text / label / mono / icon`
+- 控件：`button / iconbutton / chip / badge / statusdot / textfield / searchfield / securefield / textarea / toggle / checkbox / radiocard / slider / stepper / segmented / dropdown`
+- 容器与导航：`listrow / sectionheader / empty / avatar / keyvalue / stattip / progress / spinner / skeleton / banner / toast / sidebaritem / tabs / dialog`
+- 状态与绑定：`<state>` 声明变量，`bind="name"` 双向绑定，`{state.x}` / `{item.y}` 插值，`onTap="动作名"` 或内置 `set:` / `toggle:` / `inc:` 简写。
+
+完整语法与属性表见 [`docs/XML-UI.md`](docs/XML-UI.md)。
 
 ## 加一套主题
 

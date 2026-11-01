@@ -1,0 +1,280 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  控件总览：把设计系统里的控件按「按钮 / 输入 / 选择 / 反馈 / 容器 / 导航」分区陈列，
+  每个区块用 <section> 包一层，可直接对照 XML 写法与视觉结果。
+-->
+<ui title="控件总览">
+  <state>
+    <string name="instanceName" value="1.21.4 · Fabric 0.16.9"/>
+    <string name="gameDir" value="/Users/steve/Library/Application Support/minecraft"/>
+    <string name="search" value=""/>
+    <string name="password" value=""/>
+    <string name="jvmArgs" value="-Xmx4G -XX:+UseG1GC"/>
+    <string name="lockedArgs" value="由系统策略锁定"/>
+    <string name="channel" value="release"/>
+    <string name="javaVersion" value="21"/>
+    <string name="tab" value="overview"/>
+    <int name="memory" value="4096"/>
+    <int name="threads" value="8"/>
+    <bool name="autoUpdate" value="true"/>
+    <bool name="experimental" value="false"/>
+    <bool name="uploadLogs" value="false"/>
+    <bool name="agreeLicense" value="true"/>
+    <bool name="showToast" value="true"/>
+  </state>
+  <page title="控件总览" subtitle="按钮、输入、选择、反馈与容器组件的 XML 写法，全部由设计系统渲染">
+
+    <!-- ============ 按钮 ============ -->
+    <section title="按钮" subtitle="primary / secondary / ghost / danger 四种变体 × small / medium / large 三种尺寸">
+      <vstack spacing="sm">
+        <hstack spacing="sm" align="center">
+          <mono content="primary" tone="tertiary" width="88"/>
+          <button title="保存设置" variant="primary" size="small"/>
+          <button title="添加实例" icon="plus" variant="primary" size="medium"/>
+          <button title="开始游戏" icon="play.fill" variant="primary" size="large" shortcut="⌘↩"/>
+          <spacer/>
+          <text style="micro" tone="tertiary">每屏最多一个主操作</text>
+        </hstack>
+        <hstack spacing="sm" align="center">
+          <mono content="secondary" tone="tertiary" width="88"/>
+          <button title="取消" variant="secondary" size="small"/>
+          <button title="导入整合包" icon="square.and.arrow.down" variant="secondary" size="medium"/>
+          <button title="选择版本" icon="list.bullet.rectangle" variant="secondary" size="large"/>
+          <spacer/>
+          <text style="micro" tone="tertiary">次要操作，可与主操作并排</text>
+        </hstack>
+        <hstack spacing="sm" align="center">
+          <mono content="ghost" tone="tertiary" width="88"/>
+          <button title="刷新" icon="arrow.clockwise" variant="ghost" size="small"/>
+          <button title="查看日志" icon="doc.text.fill" variant="ghost" size="medium"/>
+          <button title="打开游戏目录" icon="folder.fill" variant="ghost" size="large"/>
+          <spacer/>
+          <text style="micro" tone="tertiary">轻量操作，用于工具栏与行内</text>
+        </hstack>
+        <hstack spacing="sm" align="center">
+          <mono content="danger" tone="tertiary" width="88"/>
+          <button title="删除" icon="trash.fill" variant="danger" size="small"/>
+          <button title="强制停止" icon="stop.fill" variant="danger" size="medium"/>
+          <button title="重置实例配置" icon="arrow.counterclockwise" variant="danger" size="large"/>
+          <spacer/>
+          <text style="micro" tone="tertiary">破坏性操作，建议二次确认</text>
+        </hstack>
+      </vstack>
+      <divider full-width="true"/>
+      <hstack spacing="sm">
+        <iconbutton icon="gearshape.fill" label="设置"/>
+        <iconbutton icon="bell.fill" label="通知" variant="secondary"/>
+        <iconbutton icon="trash.fill" label="删除实例" variant="danger" size="large"/>
+        <spacer/>
+        <chip title="全部" selected="true"/>
+        <chip title="已安装" icon="checkmark.circle.fill"/>
+        <chip title="可更新" icon="arrow.down.circle"/>
+      </hstack>
+      <hstack spacing="sm">
+        <badge text="Fabric" tone="neutral"/>
+        <badge text="正版" tone="success"/>
+        <badge text="需更新" tone="warning"/>
+        <badge text="冲突" tone="danger"/>
+        <badge text="新版本" tone="info"/>
+        <badge text="推荐" tone="accent" icon="star.fill"/>
+        <spacer/>
+        <statusdot tone="success" pulsing="true"/>
+        <statusdot tone="warning"/>
+        <statusdot tone="danger"/>
+        <statusdot tone="info"/>
+        <statusdot tone="accent"/>
+      </hstack>
+      <hstack spacing="sm">
+        <button title="安装中…" icon="arrow.down.circle" variant="primary" loading="true"/>
+        <button title="需要正版账户" icon="lock.fill" variant="secondary" disabled="true"/>
+        <button title="仅预览" variant="ghost" disabled="true"/>
+      </hstack>
+      <button title="使用 Microsoft 账户登录" icon="person.badge.key.fill" variant="primary" size="large" full-width="true"/>
+    </section>
+
+    <!-- ============ 输入 ============ -->
+    <section title="输入" subtitle="文本框 / 搜索框 / 密码框 / 多行文本，含 helper、error 与禁用态">
+      <grid columns="2" spacing="md">
+        <vstack spacing="xs" full-width="true">
+          <label>实例名称</label>
+          <textfield placeholder="例如 1.21.4 · Fabric" bind="instanceName" icon="cube.fill"
+                     helper="显示在启动器首屏的实例名称"/>
+        </vstack>
+        <vstack spacing="xs" full-width="true">
+          <label>版本目录</label>
+          <textfield placeholder="选择游戏目录" bind="gameDir" icon="folder.fill"
+                     error="目录不存在，请重新选择"/>
+        </vstack>
+        <vstack spacing="xs" full-width="true">
+          <label>搜索</label>
+          <searchfield bind="search" placeholder="搜索整合包、模组或服务器"/>
+        </vstack>
+        <vstack spacing="xs" full-width="true">
+          <label>账户密码</label>
+          <securefield placeholder="Microsoft 账户密码" bind="password" icon="lock.fill"/>
+        </vstack>
+        <vstack spacing="xs" full-width="true">
+          <label>禁用态</label>
+          <textfield placeholder="需要管理员权限" bind="lockedArgs" icon="lock.shield.fill"
+                     disabled="true" helper="由系统策略锁定，无法修改"/>
+        </vstack>
+        <vstack spacing="xs" full-width="true">
+          <label>JVM 参数</label>
+          <textarea placeholder="每行一条 JVM 参数，例如 -Xmx4G" bind="jvmArgs" min-height="88"/>
+        </vstack>
+      </grid>
+    </section>
+
+    <!-- ============ 选择 ============ -->
+    <section title="选择" subtitle="toggle / checkbox / radiocard / slider / stepper / segmented / dropdown">
+      <grid columns="2" spacing="md">
+        <vstack spacing="sm" full-width="true">
+          <toggle title="启动时自动检查更新" subtitle="仅检查正式版与快照" bind="autoUpdate"/>
+          <toggle title="启用实验性渲染管线" subtitle="可能提高帧率，也可能导致崩溃" bind="experimental"/>
+          <checkbox title="崩溃后自动上传日志" bind="uploadLogs"/>
+          <checkbox title="我已阅读并同意 Minecraft 最终用户许可协议" bind="agreeLicense"/>
+        </vstack>
+        <vstack spacing="sm" full-width="true">
+          <radiocard title="Java 21" subtitle="Temurin 21.0.4 · 推荐用于 1.21.4" icon="cup.and.saucer.fill"
+                     selected="true" onTap="set:javaVersion=21"/>
+          <radiocard title="Java 17" subtitle="Temurin 17.0.12 · 兼容 1.18 ~ 1.20.6" icon="cup.and.saucer.fill"
+                     selected="false" onTap="set:javaVersion=17"/>
+          <radiocard title="使用系统 Java" subtitle="自动检测 /usr/bin/java" icon="desktopcomputer"
+                     selected="false" onTap="set:javaVersion=system"/>
+        </vstack>
+      </grid>
+      <divider full-width="true"/>
+      <grid columns="2" spacing="md">
+        <vstack spacing="md" full-width="true">
+          <slider bind="memory" min="1024" max="8192" label="最大内存分配" value-text="{state.memory} MB"/>
+          <stepper bind="threads" min="1" max="32" label="渲染线程" unit="线程"/>
+        </vstack>
+        <vstack spacing="md" full-width="true">
+          <segmented bind="channel">
+            <option value="release" title="正式版" icon="checkmark.seal.fill"/>
+            <option value="snapshot" title="快照" icon="flask.fill"/>
+            <option value="beta" title="测试版" icon="hammer.fill"/>
+          </segmented>
+          <dropdown bind="javaVersion" placeholder="选择 Java 运行时">
+            <option value="21" title="Java 21（推荐）"/>
+            <option value="17" title="Java 17"/>
+            <option value="8" title="Java 8"/>
+          </dropdown>
+        </vstack>
+      </grid>
+    </section>
+
+    <!-- ============ 反馈 ============ -->
+    <section title="反馈" subtitle="progress 四种语气与不确定态、spinner、skeleton、banner 四种语气、toast">
+      <vstack spacing="md">
+        <progress value="68" max="100" label="Fabric API 0.100.1 · 下载中" tone="accent"/>
+        <progress value="31" max="100" label="Sodium 0.6.9 · 下载中" tone="success"/>
+        <progress value="82" max="100" label="重建资源索引 · 即将完成" tone="warning"/>
+        <progress value="12" max="100" label="磁盘空间不足，任务已暂停" tone="danger"/>
+        <progress label="正在校验资源索引 · 预计 3 分钟"/>
+        <hstack spacing="lg">
+          <spinner/>
+          <spinner size="24" tone="success"/>
+          <spinner size="32" tone="warning"/>
+          <spacer/>
+          <hstack spacing="xs">
+            <mono content="12.4 MB/s" tone="accent"/>
+            <text style="micro" tone="tertiary">平均下载速度 · 剩余 2 分 40 秒</text>
+          </hstack>
+        </hstack>
+        <vstack spacing="xs">
+          <skeleton width="420" height="14" radius="sm"/>
+          <skeleton width="360" height="12"/>
+          <skeleton width="240" height="12"/>
+        </vstack>
+      </vstack>
+      <divider full-width="true"/>
+      <grid columns="2" spacing="md">
+        <banner title="Java 21 已就绪" message="Temurin 21.0.4 已通过完整性校验。"
+                tone="info" action-title="查看" onTap="set:showToast=true"/>
+        <banner title="存档备份完成" message="7 个世界已备份至 backup/2026-11-01。"
+                tone="success"/>
+        <banner title="2 个模组可更新" message="Fabric API 与 Sodium 有新版本可用。"
+                tone="warning" action-title="立即更新" onTap="set:showToast=true"/>
+        <banner title="启动失败" message="当前光影与 Sodium 0.6.9 不兼容，请查看日志。"
+                tone="danger" action-title="查看日志" onTap="set:showToast=true"/>
+      </grid>
+      <if test="{state.showToast}">
+        <toast title="下载完成" message="Fabric API 0.100.1 已安装，重启游戏后生效。"
+               tone="success" onClose="toggle:showToast"/>
+      </if>
+    </section>
+
+    <!-- ============ 容器 ============ -->
+    <section title="容器" subtitle="listrow / keyvalue / stattile / avatar / empty / sectionheader">
+      <grid columns="2" spacing="md">
+        <vstack spacing="xs" full-width="true">
+          <sectionheader title="已安装实例" subtitle="按最近游玩排序 · 点击可切换"/>
+          <listrow title="1.21.4 · Fabric" subtitle="模组 214 个 · 上次游玩 今天 14:32"
+                   icon="cube.fill" badge="Fabric"/>
+          <listrow title="1.20.1 · Forge" subtitle="模组 96 个 · 上次游玩 3 天前"
+                   icon="cube.fill" badge="Forge"/>
+          <listrow title="1.8.9 · PvP 整合" subtitle="模组 12 个 · 上次游玩 2 周前"
+                   icon="bolt.fill" badge="PvP" selected="true"/>
+        </vstack>
+        <vstack spacing="md" full-width="true">
+          <panel level="subtle" radius="md" spacing="sm">
+            <keyvalue key="游戏版本" value="1.21.4"/>
+            <keyvalue key="加载器" value="Fabric 0.16.9"/>
+            <keyvalue key="内存分配" value="4.0 GB / 16.0 GB"/>
+            <keyvalue key="实例路径" value="/instances/1.21.4-fabric" mono="false"/>
+          </panel>
+          <hstack spacing="md">
+            <stattile value="48.2k" label="在线玩家" icon="person.3.fill"/>
+            <stattile value="32 ms" label="延迟" icon="wifi"/>
+          </hstack>
+          <hstack spacing="sm">
+            <avatar name="Steve_2026" size="44" online="true"/>
+            <avatar name="Alex" size="36"/>
+            <avatar icon="person.fill" size="28"/>
+            <spacer/>
+            <statusdot tone="success" pulsing="true"/>
+            <badge text="2 人在线" tone="success"/>
+          </hstack>
+          <hstack spacing="md">
+            <icon name="play.fill" tone="accent" size="16"/>
+            <icon name="cube.fill" size="18"/>
+            <icon name="bell.fill" tone="warning" size="18"/>
+            <icon name="tray.and.arrow.down.fill" tone="secondary" size="18"/>
+            <spacer/>
+            <text style="micro" tone="tertiary">SF Symbol 图标，size 与 tone 均可调</text>
+          </hstack>
+        </vstack>
+      </grid>
+      <divider full-width="true"/>
+      <grid columns="2" spacing="md">
+        <empty icon="tray" title="暂无下载任务" message="在实例列表中选择版本即可开始下载。"
+               action-title="去下载" onTap="set:showToast=true"/>
+        <empty icon="wifi.slash" title="服务器不可达" message="mc.hypixel.net 连接超时，请检查网络。"
+               action-title="重试" onTap="set:showToast=true"/>
+      </grid>
+    </section>
+
+    <!-- ============ 导航 ============ -->
+    <section title="导航" subtitle="sidebaritem ×3 与 tabs，选中态由 selected / bind 控制">
+      <grid columns="2" spacing="md">
+        <panel level="subtle" radius="lg" spacing="xxs">
+          <sidebaritem title="启动器" icon="house.fill" badge="2" selected="true"/>
+          <sidebaritem title="版本管理" icon="square.stack.3d.up.fill"/>
+          <sidebaritem title="设置" icon="gearshape.fill"/>
+        </panel>
+        <vstack spacing="md" full-width="true">
+          <tabs bind="tab">
+            <option value="overview" title="概览" icon="chart.bar.fill"/>
+            <option value="mods" title="模组" icon="puzzlepiece.fill"/>
+            <option value="logs" title="日志" icon="doc.text.fill"/>
+          </tabs>
+          <panel level="subtle" radius="md" spacing="xs">
+            <sectionheader title="版本管理" subtitle="已安装 4 个实例 · 2 个可更新"/>
+            <text style="micro" tone="secondary">tabs 通过 bind 双向绑定状态变量，sidebaritem 用 selected 表示当前页。</text>
+          </panel>
+        </vstack>
+      </grid>
+    </section>
+  </page>
+</ui>
