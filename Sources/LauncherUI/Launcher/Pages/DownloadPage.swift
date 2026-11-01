@@ -1,12 +1,14 @@
 import Foundation
 import SwiftUI
 
-/// 下载页：搜索筛选、版本列表（安装状态模拟）、右侧下载队列 / 磁盘占用 / 下载源。
+/// 下载页：页内三个分区（版本库 / 整合包 / 下载任务），最小窗口下无需滚动。
 public struct DownloadPage: View {
+    @State private var section = "versions"
+
     @State private var searchText = ""
     @State private var filter: VersionFilter = .all
     @State private var sortMode: SortMode = .newest
-    @State private var versions: [LauncherVersionItem] = LauncherDemoData.versions
+    @State private var versions: [LauncherVersionItem] = LauncherDemoData.versions + DemoModpacks.items
 
     @State private var pausedTaskIDs: Set<String> = []
     @State private var cancelledTaskIDs: Set<String> = []
@@ -18,7 +20,9 @@ public struct DownloadPage: View {
     @State private var autoCleanOldVersions = true
 
     @State private var refreshed = false
-    @State private var actionHint: String?
+    @State private var folderOpened = false
+    @State private var filterHint: String?
+    @State private var importHint: String?
 
     public init() {}
 
@@ -27,16 +31,16 @@ public struct DownloadPage: View {
             LauncherPageHeader(title: "下载", subtitle: "安装游戏版本、加载器与整合包") {
                 HStack(spacing: LauncherSpace.sm) {
                     LauncherButton(
-                        "打开文件夹",
-                        systemImage: "folder",
+                        folderOpened ? "已定位" : "打开文件夹",
+                        systemImage: folderOpened ? "checkmark" : "folder",
                         variant: .secondary,
                         size: .small
                     ) {
-                        showHint("演示：这里会用访达打开 \(LauncherDemoData.versionDirectory)")
+                        openFolder()
                     }
                     LauncherButton(
-                        "刷新列表",
-                        systemImage: "arrow.clockwise",
+                        refreshed ? "已刷新" : "刷新列表",
+                        systemImage: refreshed ? "checkmark" : "arrow.clockwise",
                         variant: .secondary,
                         size: .small
                     ) {
@@ -46,23 +50,65 @@ public struct DownloadPage: View {
             }
             .padding(.bottom, LauncherSpace.xxs)
 
-            toolbar
-
-            HStack(alignment: .top, spacing: LauncherSpace.lg) {
-                versionList
-                    .frame(maxWidth: .infinity)
-
-                rightRail
+            LauncherSectionLayout {
+                LauncherSectionRail(items: sections, selection: $section, header: nil)
+            } content: {
+                sectionContent
             }
         }
     }
 
-    // MARK: - 搜索 / 筛选 / 排序
+    // MARK: - 分区
 
-    private var toolbar: some View {
+    private var sections: [LauncherSectionItem] {
+        [
+            LauncherSectionItem(
+                id: "versions",
+                title: "版本库",
+                systemImage: "square.stack.3d.up.fill",
+                badge: "\(versionItems.count)"
+            ),
+            LauncherSectionItem(
+                id: "modpacks",
+                title: "整合包",
+                systemImage: "shippingbox.fill",
+                badge: "\(modpackItems.count)"
+            ),
+            LauncherSectionItem(
+                id: "tasks",
+                title: "下载任务",
+                systemImage: "arrow.down.circle.fill",
+                badge: "\(visibleTasks.count)"
+            )
+        ]
+    }
+
+    @ViewBuilder
+    private var sectionContent: some View {
+        switch section {
+        case "modpacks":
+            modpackSection
+        case "tasks":
+            taskSection
+        default:
+            versionSection
+        }
+    }
+
+    // MARK: - 分区一：版本库
+
+    private var versionSection: some View {
+        VStack(alignment: .leading, spacing: LauncherSpace.md) {
+            versionToolbar
+            versionList
+        }
+    }
+
+    /// 搜索 / 类型筛选 / 排序：只在版本库分区出现一次。
+    private var versionToolbar: some View {
         HStack(spacing: LauncherSpace.md) {
-            LauncherSearchField(text: $searchText, placeholder: "搜索版本号、加载器或整合包")
-                .frame(width: 250)
+            LauncherSearchField(text: $searchText, placeholder: "搜索版本号或加载器")
+                .frame(width: 220)
 
             HStack(spacing: LauncherSpace.sm) {
                 ForEach(VersionFilter.allCases) { option in
@@ -77,18 +123,16 @@ public struct DownloadPage: View {
             Spacer(minLength: LauncherSpace.sm)
 
             LauncherDropdown(options: sortOptions, selection: $sortMode, placeholder: "排序")
-                .frame(width: 168)
+                .frame(width: 150)
         }
     }
-
-    // MARK: - 版本列表
 
     private var versionList: some View {
         LauncherCard(level: .regular, padding: LauncherSpace.lg) {
             VStack(alignment: .leading, spacing: LauncherSpace.sm) {
                 LauncherSectionHeader(
                     title: "版本列表",
-                    subtitle: listSubtitle,
+                    subtitle: versionListSubtitle,
                     accessory: AnyView(
                         LauncherBadge(
                             refreshed ? "已刷新" : "\(visibleVersions.count) 个",
@@ -115,8 +159,8 @@ public struct DownloadPage: View {
                     .launcherAnimation(LauncherMotion.spring, value: versions)
                 }
 
-                if let actionHint {
-                    Text(actionHint)
+                if let filterHint {
+                    Text(filterHint)
                         .textStyle(.micro, tone: .tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -146,7 +190,7 @@ public struct DownloadPage: View {
         )
     }
 
-    /// 状态区：未安装 → 安装按钮；安装中 → 进度条；已安装 → 次要按钮。
+    /// 行内三态：未安装 → 安装按钮；安装中 → 进度条；已安装 → 次要按钮。
     @ViewBuilder
     private func statusAccessory(for item: LauncherVersionItem) -> some View {
         switch item.state {
@@ -173,15 +217,108 @@ public struct DownloadPage: View {
         }
     }
 
-    // MARK: - 右栏
+    // MARK: - 分区二：整合包
 
-    private var rightRail: some View {
-        VStack(spacing: LauncherSpace.md) {
-            downloadQueueCard
-            diskCard
-            sourceCard
+    private var modpackSection: some View {
+        VStack(alignment: .leading, spacing: LauncherSpace.md) {
+            LauncherSectionHeader(
+                title: "整合包",
+                subtitle: "\(modpackItems.count) 个整合包 · 安装过程为本地演示",
+                accessory: AnyView(
+                    LauncherButton(
+                        "导入整合包",
+                        systemImage: "shippingbox",
+                        variant: .secondary,
+                        size: .small
+                    ) {
+                        showImportHint()
+                    }
+                )
+            )
+
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: LauncherSpace.md), count: 3),
+                spacing: LauncherSpace.md
+            ) {
+                ForEach(modpackItems) { item in
+                    modpackCard(item)
+                }
+            }
+            .launcherAnimation(LauncherMotion.spring, value: versions)
+
+            if let importHint {
+                Text(importHint)
+                    .textStyle(.micro, tone: .tertiary)
+            }
         }
-        .frame(width: 318)
+    }
+
+    private func modpackCard(_ item: LauncherVersionItem) -> some View {
+        LauncherCard(level: .regular, padding: LauncherSpace.md) {
+            VStack(alignment: .leading, spacing: LauncherSpace.sm) {
+                LauncherBlockArt(seed: item.id, cornerRadius: LauncherRadius.md, label: item.size)
+                    .frame(height: 76)
+
+                HStack(spacing: LauncherSpace.xs) {
+                    Text(item.version)
+                        .textStyle(.bodyStrong)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    LauncherBadge("整合包", tone: .neutral)
+                }
+
+                Text(item.note)
+                    .textStyle(.micro, tone: .tertiary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                modpackStatus(for: item)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// 整合包卡片的三态：安装 / 进度 / 已安装。
+    @ViewBuilder
+    private func modpackStatus(for item: LauncherVersionItem) -> some View {
+        switch item.state {
+        case .available:
+            LauncherButton(
+                "安装",
+                systemImage: "arrow.down.circle",
+                variant: .primary,
+                size: .small,
+                isFullWidth: true
+            ) {
+                startInstall(item.id)
+            }
+        case .installing(let progress):
+            LauncherProgressBar(value: progress)
+        case .installed:
+            LauncherButton(
+                "已安装",
+                systemImage: "checkmark",
+                variant: .secondary,
+                size: .small,
+                isFullWidth: true,
+                isDisabled: true
+            ) {}
+        }
+    }
+
+    // MARK: - 分区三：下载任务
+
+    private var taskSection: some View {
+        HStack(alignment: .top, spacing: LauncherSpace.md) {
+            downloadQueueCard
+                .frame(maxWidth: .infinity)
+
+            VStack(spacing: LauncherSpace.md) {
+                diskCard
+                sourceCard
+            }
+            .frame(width: 280)
+        }
     }
 
     private var downloadQueueCard: some View {
@@ -191,7 +328,17 @@ public struct DownloadPage: View {
                     title: "下载队列",
                     subtitle: queueSubtitle,
                     accessory: AnyView(
-                        LauncherBadge(queueBadgeText, tone: queueBadgeTone)
+                        HStack(spacing: LauncherSpace.sm) {
+                            LauncherBadge(queueBadgeText, tone: queueBadgeTone)
+                            LauncherButton(
+                                "清空",
+                                variant: .ghost,
+                                size: .small,
+                                isDisabled: visibleTasks.isEmpty
+                            ) {
+                                clearQueue()
+                            }
+                        }
                     )
                 )
 
@@ -204,6 +351,7 @@ public struct DownloadPage: View {
                         onAction: {
                             withAnimation(LauncherMotion.spring) {
                                 cancelledTaskIDs.removeAll()
+                                pausedTaskIDs.removeAll()
                             }
                         }
                     )
@@ -213,6 +361,16 @@ public struct DownloadPage: View {
                         ForEach(visibleTasks) { task in
                             queueRow(task)
                         }
+                    }
+
+                    LauncherDivider()
+
+                    HStack(spacing: LauncherSpace.sm) {
+                        LauncherMonoText(queueFooter, tone: .tertiary, size: 10)
+                        Spacer(minLength: LauncherSpace.sm)
+                        LauncherStatusDot(tone: .success)
+                        Text("网络稳定")
+                            .textStyle(.micro, tone: .tertiary)
                     }
                 }
             }
@@ -274,7 +432,7 @@ public struct DownloadPage: View {
             VStack(alignment: .leading, spacing: LauncherSpace.sm) {
                 LauncherSectionHeader(
                     title: "磁盘占用",
-                    subtitle: "游戏目录 · 版本与资源",
+                    subtitle: "版本与资源",
                     accessory: AnyView(
                         LauncherBadge(
                             didClean ? "已释放 1.2 GB" : "空间充足",
@@ -285,11 +443,10 @@ public struct DownloadPage: View {
 
                 LauncherProgressBar(
                     value: usedGB / 99.1,
-                    label: "已用 \(usedSpaceText) / 共 99.1 GB"
+                    label: "已用 \(usedSpaceText) / 99.1 GB"
                 )
 
                 VStack(spacing: LauncherSpace.xs) {
-                    LauncherKeyValueRow(key: "已用空间", value: usedSpaceText)
                     LauncherKeyValueRow(key: "可用空间", value: availableSpaceText)
                     LauncherKeyValueRow(key: "已安装实例", value: "\(LauncherDemoData.instances.count) 个")
                 }
@@ -330,12 +487,22 @@ public struct DownloadPage: View {
         }
     }
 
-    // MARK: - 过滤 / 排序
+    // MARK: - 版本数据
 
-    /// 当前可见版本：筛选 → 搜索 → 排序。
+    /// 版本库条目：排除整合包。
+    private var versionItems: [LauncherVersionItem] {
+        versions.filter { $0.kind != .modpack }
+    }
+
+    /// 整合包条目：由现有演示数据与页面内演示数据组成。
+    private var modpackItems: [LauncherVersionItem] {
+        versions.filter { $0.kind == .modpack }
+    }
+
+    /// 当前可见版本：类型 → 搜索 → 排序。
     private var visibleVersions: [LauncherVersionItem] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let filtered = versions.filter { item in
+        let filtered = versionItems.filter { item in
             guard filter.matches(item.kind) else { return false }
             guard !query.isEmpty else { return true }
             return item.version.lowercased().contains(query)
@@ -355,13 +522,13 @@ public struct DownloadPage: View {
         }
     }
 
-    private var listSubtitle: String {
-        let installedCount = versions.filter { $0.state == .installed }.count
+    private var versionListSubtitle: String {
+        let installedCount = versionItems.filter { $0.state == .installed }.count
         let shown = visibleVersions.count
-        if shown != versions.count {
-            return "筛选出 \(shown) 个 / 共 \(versions.count) 个 · 已安装 \(installedCount) 个"
+        if shown != versionItems.count {
+            return "筛选出 \(shown) 个 / 共 \(versionItems.count) 个 · 已安装 \(installedCount) 个"
         }
-        return "共 \(versions.count) 个 · 已安装 \(installedCount) 个 · \(sortMode.rawValue)"
+        return "共 \(versionItems.count) 个 · 已安装 \(installedCount) 个 · \(sortMode.rawValue)"
     }
 
     private var sortOptions: [LauncherSegment<SortMode>] {
@@ -398,7 +565,7 @@ public struct DownloadPage: View {
         }
     }
 
-    // MARK: - 队列
+    // MARK: - 队列数据
 
     private var visibleTasks: [LauncherDownloadTask] {
         LauncherDemoData.downloadTasks.filter { !cancelledTaskIDs.contains($0.id) }
@@ -422,6 +589,13 @@ public struct DownloadPage: View {
     private var queueBadgeTone: LauncherBadgeTone {
         if visibleTasks.isEmpty { return .neutral }
         return pausedCount > 0 ? .warning : .accent
+    }
+
+    private var queueFooter: String {
+        let values = visibleTasks.compactMap { $0.progress }
+        guard !values.isEmpty else { return "等待任务开始" }
+        let average = Int((values.reduce(0, +) / Double(values.count) * 100).rounded())
+        return "平均进度 \(average)% · 剩余 2 分 12 秒"
     }
 
     // MARK: - 磁盘文案
@@ -477,6 +651,15 @@ public struct DownloadPage: View {
         }
     }
 
+    private func clearQueue() {
+        withAnimation(LauncherMotion.spring) {
+            for task in visibleTasks {
+                cancelledTaskIDs.insert(task.id)
+            }
+            pausedTaskIDs.removeAll()
+        }
+    }
+
     private func cleanCache() {
         guard !isCleaning else { return }
         isCleaning = true
@@ -498,7 +681,6 @@ public struct DownloadPage: View {
         withAnimation(LauncherMotion.spring) {
             refreshed = true
         }
-        showHint("已刷新版本列表 · 当前 \(visibleVersions.count) 个版本可安装")
         Task { @MainActor in
             do {
                 try await Task.sleep(nanoseconds: 1_800_000_000)
@@ -511,18 +693,25 @@ public struct DownloadPage: View {
         }
     }
 
-    private func resetFilters() {
+    private func openFolder() {
         withAnimation(LauncherMotion.spring) {
-            searchText = ""
-            filter = .all
+            folderOpened = true
         }
-        showHint("筛选已重置")
+        Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 1_800_000_000)
+            } catch {
+                return
+            }
+            withAnimation(LauncherMotion.smooth) {
+                folderOpened = false
+            }
+        }
     }
 
-    /// 短暂操作提示：只在实际点击后出现，离屏截图默认不占位。
-    private func showHint(_ text: String) {
+    private func showImportHint() {
         withAnimation(LauncherMotion.smooth) {
-            actionHint = text
+            importHint = "演示：把 .zip 整合包拖入窗口，或从模组站一键导入"
         }
         Task { @MainActor in
             do {
@@ -531,7 +720,27 @@ public struct DownloadPage: View {
                 return
             }
             withAnimation(LauncherMotion.smooth) {
-                if actionHint == text { actionHint = nil }
+                importHint = nil
+            }
+        }
+    }
+
+    private func resetFilters() {
+        withAnimation(LauncherMotion.spring) {
+            searchText = ""
+            filter = .all
+        }
+        withAnimation(LauncherMotion.smooth) {
+            filterHint = "筛选已重置"
+        }
+        Task { @MainActor in
+            do {
+                try await Task.sleep(nanoseconds: 2_600_000_000)
+            } catch {
+                return
+            }
+            withAnimation(LauncherMotion.smooth) {
+                filterHint = nil
             }
         }
     }
@@ -539,13 +748,12 @@ public struct DownloadPage: View {
 
 // MARK: - 页面内选项枚举
 
-/// 版本类型筛选（全部 / 正式版 / 快照 / 加载器 / 整合包）。
+/// 版本库筛选（全部 / 正式版 / 快照 / 加载器）；整合包单独成区。
 private enum VersionFilter: String, CaseIterable, Identifiable {
     case all = "全部"
     case release = "正式版"
     case snapshot = "快照"
     case loader = "加载器"
-    case modpack = "整合包"
 
     var id: String { rawValue }
 
@@ -559,4 +767,30 @@ private enum SortMode: String, CaseIterable, Hashable {
     case newest = "按发布时间"
     case version = "按版本号"
     case size = "按大小"
+}
+
+// MARK: - 页面内演示数据（不改动 LauncherDemoData）
+
+/// 额外两条整合包演示数据，与现有 Better MC 一起构成整合包分区。
+private enum DemoModpacks {
+    static let items: [LauncherVersionItem] = [
+        LauncherVersionItem(
+            id: "modpack-atm10",
+            version: "All the Mods 10",
+            kind: .modpack,
+            released: "2026-09-05",
+            size: "6.8 GB",
+            note: "科技整合 · 412 个模组 · 建议 8 GB 内存",
+            state: .available
+        ),
+        LauncherVersionItem(
+            id: "modpack-rlcraft",
+            version: "RLCraft · 硬核生存",
+            kind: .modpack,
+            released: "2026-08-21",
+            size: "4.2 GB",
+            note: "生存挑战 · 210 个模组 · 极高难度",
+            state: .installed
+        )
+    ]
 }

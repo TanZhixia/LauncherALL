@@ -119,6 +119,33 @@ def sheet_app():
     canvas.save(out, optimize=True)
     print(f"wrote {out.relative_to(ROOT)}  {canvas.size}")
 
+def sheet_app_min():
+    """最小窗口 1080×720 验收图：四页 × 深/浅主题（应无纵向滚动）。"""
+    folder = SNAP / "App"
+    if not folder.exists():
+        return
+    pad, label_h, title_h = 12, 30, 58
+    img0 = Image.open(folder / "app-min-graphite-launch.png")
+    cell_w = 480
+    cell_h = int(cell_w * img0.height / img0.width)
+    canvas = Image.new("RGB", (4 * cell_w + 5 * pad, 2 * (cell_h + label_h) + 3 * pad + title_h), (10, 11, 13))
+    draw = ImageDraw.Draw(canvas)
+    f_title, f_label = load_font(26), load_font(17)
+    draw.text((pad, pad + 6), "最小窗口 1080×720 · 四个页面无需纵向滚动（深色 / 浅色）", font=f_title, fill=(238, 240, 243))
+    for row, (theme_id, theme_name) in enumerate([("graphite", "深色"), ("porcelain", "浅色")]):
+        for col, (tab_id, tab_name) in enumerate(APP_TABS):
+            path = folder / f"app-min-{theme_id}-{tab_id}.png"
+            if not path.exists():
+                continue
+            x = pad + col * (cell_w + pad)
+            y = title_h + pad + row * (cell_h + label_h + pad)
+            img = Image.open(path).convert("RGB").resize((cell_w, cell_h), Image.LANCZOS)
+            canvas.paste(img, (x, y))
+            draw.text((x + 2, y + cell_h + 6), f"{tab_name} · {theme_name}", font=f_label, fill=(186, 192, 200))
+    out = SNAP / "sheet-app-min.png"
+    canvas.save(out, optimize=True)
+    print(f"wrote {out.relative_to(ROOT)}  {canvas.size}")
+
 if __name__ == "__main__":
     sheet("demo", title="方块启动器 · 同一套 UI 的深色 / 浅色主题（Minecraft Launcher UI Kit）", out_name="sheet-themes-demo.png")
     sheet("studio", title="主题工作台 · 一深一浅，只换色不换结构", out_name="sheet-themes-studio.png")
@@ -129,3 +156,4 @@ if __name__ == "__main__":
     sheet("feedback", title="反馈与状态 · 进度 / 加载 / 骨架屏 / 横幅 / Toast", out_name="sheet-feedback.png")
     sheet_xml()
     sheet_app()
+    sheet_app_min()

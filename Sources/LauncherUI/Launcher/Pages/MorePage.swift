@@ -1,17 +1,31 @@
 import SwiftUI
 
-/// 更多页：常用工具入口、快捷操作、快捷键与启动器信息。
+/// 更多页：页内四个分区（工具 / 快捷操作 / 快捷键 / 关于），一次只显示一个，最小窗口免滚动。
 public struct MorePage: View {
     @Environment(\.launcherTheme) private var theme
 
     /// 打开既有设计系统画廊（由 App 壳注入，通常以 sheet 呈现）。
     private let onOpenGallery: () -> Void
 
+    @State private var section = "tools"
     @State private var selectedToolID: String?
     @State private var exportHint: String?
     @State private var actionMessage = "所有操作都在本地完成，不会上传任何数据。"
     @State private var isCheckingUpdates = false
     @State private var updateMessage = "上次检查：今天 09:20"
+
+    /// 二级竖排导航的四个分区。
+    private let sections: [LauncherSectionItem] = [
+        LauncherSectionItem(
+            id: "tools",
+            title: "工具",
+            systemImage: "square.grid.2x2.fill",
+            badge: "\(LauncherDemoData.tools.count)"
+        ),
+        LauncherSectionItem(id: "actions", title: "快捷操作", systemImage: "bolt.fill"),
+        LauncherSectionItem(id: "shortcuts", title: "快捷键", systemImage: "keyboard"),
+        LauncherSectionItem(id: "about", title: "关于", systemImage: "info.circle.fill", badge: "v0.2.0")
+    ]
 
     public init(onOpenGallery: @escaping () -> Void = {}) {
         self.onOpenGallery = onOpenGallery
@@ -31,23 +45,22 @@ public struct MorePage: View {
                 }
             }
 
-            toolsSection
-
-            quickActionsCard
-
-            HStack(alignment: .top, spacing: LauncherSpace.lg) {
-                shortcutsCard
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                aboutCard
-                    .frame(width: 360)
+            LauncherSectionLayout {
+                LauncherSectionRail(items: sections, selection: $section, header: nil)
+            } content: {
+                switch section {
+                case "actions": quickActionsSection
+                case "shortcuts": shortcutsSection
+                case "about": aboutSection
+                default: toolsSection
+                }
             }
         }
     }
 
-    // MARK: - 工具网格
+    // MARK: - 工具
 
-    /// 六个工具入口：两列卡片，点击高亮并把提示同步到快捷操作卡。
+    /// 六个工具入口：三列两行，点击高亮并在底部同步所选工具。
     private var toolsSection: some View {
         VStack(alignment: .leading, spacing: LauncherSpace.md) {
             LauncherSectionHeader(
@@ -55,7 +68,7 @@ public struct MorePage: View {
                 subtitle: "维护、备份与本地资源",
                 accessory: AnyView(
                     LauncherBadge(
-                        selectedToolName ?? "6 个工具",
+                        selectedToolName ?? "\(LauncherDemoData.tools.count) 个工具",
                         tone: selectedToolName == nil ? .neutral : .accent
                     )
                 )
@@ -63,6 +76,7 @@ public struct MorePage: View {
 
             LazyVGrid(
                 columns: [
+                    GridItem(.flexible(), spacing: LauncherSpace.md, alignment: .leading),
                     GridItem(.flexible(), spacing: LauncherSpace.md, alignment: .leading),
                     GridItem(.flexible(), spacing: LauncherSpace.md, alignment: .leading)
                 ],
@@ -73,25 +87,46 @@ public struct MorePage: View {
                     toolCard(tool)
                 }
             }
+
+            HStack(spacing: LauncherSpace.xs) {
+                Image(systemName: "hand.tap")
+                    .textStyle(.micro, tone: .tertiary)
+                if let selectedToolName {
+                    Text("已选择「\(selectedToolName)」")
+                        .textStyle(.micro, tone: .accent)
+                } else {
+                    Text("点击任意工具卡查看入口")
+                        .textStyle(.micro, tone: .tertiary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.top, LauncherSpace.xxs)
         }
     }
 
-    /// 单个工具卡：图标方块 + 标题/说明 + 可选计数徽标 + 选中勾选。
+    /// 单个工具卡：图标方块 + 标题/说明 + 计数徽标，底部一行给出打开/已选反馈。
     private func toolCard(_ tool: LauncherToolCard) -> some View {
         let isSelected = selectedToolID == tool.id
 
         return Button {
             selectedToolID = tool.id
-            actionMessage = "已选择工具「\(tool.title)」，这里将打开对应的功能面板。"
         } label: {
-            HStack(spacing: LauncherSpace.sm) {
-                Image(systemName: tool.systemImage)
-                    .textStyle(.headline, tone: isSelected ? .accent : .secondary)
-                    .frame(width: 30, height: 30)
-                    .background {
-                        RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
-                            .fill(theme.colors.surfaceSubtle)
+            VStack(alignment: .leading, spacing: LauncherSpace.sm) {
+                HStack(spacing: LauncherSpace.sm) {
+                    Image(systemName: tool.systemImage)
+                        .textStyle(.headline, tone: isSelected ? .accent : .secondary)
+                        .frame(width: 30, height: 30)
+                        .background {
+                            RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
+                                .fill(theme.colors.surfaceSubtle)
+                        }
+
+                    Spacer(minLength: 0)
+
+                    if let badge = tool.badge {
+                        LauncherBadge(badge, tone: .neutral)
                     }
+                }
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(tool.title)
@@ -99,19 +134,19 @@ public struct MorePage: View {
                         .lineLimit(1)
                     Text(tool.subtitle)
                         .textStyle(.micro, tone: .tertiary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-                Spacer(minLength: LauncherSpace.sm)
-
-                if let badge = tool.badge {
-                    LauncherBadge(badge, tone: .neutral)
+                HStack(spacing: LauncherSpace.xs) {
+                    Text(isSelected ? "已选中" : "打开工具")
+                        .textStyle(.micro, tone: isSelected ? .accent : .tertiary)
+                    Spacer(minLength: 0)
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "chevron.right")
+                        .textStyle(.caption, tone: isSelected ? .accent : .tertiary)
                 }
-
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "chevron.right")
-                    .textStyle(.caption, tone: isSelected ? .accent : .tertiary)
             }
-            .padding(LauncherSpace.md)
+            .padding(LauncherSpace.lg)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 LauncherGlassBackground(level: .regular, cornerRadius: LauncherRadius.lg)
@@ -131,16 +166,14 @@ public struct MorePage: View {
 
     // MARK: - 快捷操作
 
-    /// 快捷操作卡：三个本机动作 + 一行结果说明（导出日志时换成成功徽标）。
-    private var quickActionsCard: some View {
+    /// 三个本机动作 + 说明/日志路径行；导出日志时显示 2 秒成功徽标。
+    private var quickActionsSection: some View {
         LauncherCard(level: .regular, padding: LauncherSpace.lg) {
             VStack(alignment: .leading, spacing: LauncherSpace.md) {
                 LauncherSectionHeader(
                     title: "快捷操作",
                     subtitle: "常用维护动作，全部在本地执行",
-                    accessory: AnyView(
-                        LauncherMonoText("仅演示", tone: .tertiary)
-                    )
+                    accessory: AnyView(LauncherMonoText("仅演示", tone: .tertiary))
                 )
 
                 HStack(spacing: LauncherSpace.md) {
@@ -196,29 +229,38 @@ public struct MorePage: View {
 
     // MARK: - 快捷键
 
-    /// 快捷键卡：标题 + 按键，逐行展示。
-    private var shortcutsCard: some View {
+    /// 六条快捷键，两列三行排布。
+    private var shortcutsSection: some View {
         LauncherCard(level: .regular, padding: LauncherSpace.lg) {
             VStack(alignment: .leading, spacing: LauncherSpace.md) {
                 LauncherSectionHeader(
                     title: "快捷键",
                     subtitle: "高频操作少一次点击",
-                    accessory: AnyView(LauncherBadge("6 个", tone: .neutral))
+                    accessory: AnyView(LauncherBadge("\(LauncherDemoData.shortcuts.count) 个", tone: .neutral))
                 )
 
-                VStack(spacing: LauncherSpace.sm) {
-                    ForEach(LauncherDemoData.shortcuts) { shortcut in
-                        LauncherKeyValueRow(key: shortcut.title, value: shortcut.keys, isMono: true)
-                    }
+                HStack(alignment: .top, spacing: LauncherSpace.xl) {
+                    shortcutColumn(Array(LauncherDemoData.shortcuts.prefix(3)))
+                    shortcutColumn(Array(LauncherDemoData.shortcuts.dropFirst(3)))
                 }
             }
         }
     }
 
+    /// 单列快捷键：左标题右按键的等宽键值行。
+    private func shortcutColumn(_ items: [LauncherShortcut]) -> some View {
+        VStack(spacing: LauncherSpace.sm) {
+            ForEach(items) { shortcut in
+                LauncherKeyValueRow(key: shortcut.title, value: shortcut.keys, isMono: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     // MARK: - 关于
 
-    /// 关于卡：版本信息 + 检查更新 + 设计系统入口。
-    private var aboutCard: some View {
+    /// 版本信息 + 检查更新 + 设计系统入口，左右两列排布。
+    private var aboutSection: some View {
         LauncherCard(level: .regular, padding: LauncherSpace.lg) {
             VStack(alignment: .leading, spacing: LauncherSpace.md) {
                 LauncherSectionHeader(
@@ -227,45 +269,51 @@ public struct MorePage: View {
                     accessory: AnyView(LauncherBadge("v0.2.0", tone: .accent))
                 )
 
-                VStack(spacing: LauncherSpace.sm) {
-                    LauncherKeyValueRow(key: "版本", value: "v0.2.0", isMono: true)
-                    LauncherKeyValueRow(key: "构建", value: "2026.11.01 · 1842", isMono: true)
-                    LauncherKeyValueRow(key: "提交", value: "7f3c9a2", isMono: true)
-                }
-
-                HStack(spacing: LauncherSpace.sm) {
-                    LauncherButton(
-                        "检查更新",
-                        systemImage: "arrow.triangle.2.circlepath",
-                        variant: .secondary,
-                        size: .small,
-                        isLoading: isCheckingUpdates
-                    ) {
-                        checkForUpdates()
+                HStack(alignment: .top, spacing: LauncherSpace.xl) {
+                    VStack(spacing: LauncherSpace.sm) {
+                        LauncherKeyValueRow(key: "版本", value: "v0.2.0", isMono: true)
+                        LauncherKeyValueRow(key: "构建", value: "2026.11.01 · 1842", isMono: true)
+                        LauncherKeyValueRow(key: "提交", value: "7f3c9a2", isMono: true)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    LauncherButton(
-                        "设计系统画廊",
-                        systemImage: "square.grid.2x2",
-                        variant: .secondary,
-                        size: .small
-                    ) {
-                        onOpenGallery()
+                    VStack(alignment: .leading, spacing: LauncherSpace.sm) {
+                        HStack(spacing: LauncherSpace.sm) {
+                            LauncherButton(
+                                "检查更新",
+                                systemImage: "arrow.triangle.2.circlepath",
+                                variant: .secondary,
+                                size: .small,
+                                isLoading: isCheckingUpdates
+                            ) {
+                                checkForUpdates()
+                            }
+
+                            LauncherButton(
+                                "设计系统画廊",
+                                systemImage: "square.grid.2x2",
+                                variant: .secondary,
+                                size: .small
+                            ) {
+                                onOpenGallery()
+                            }
+
+                            Spacer(minLength: 0)
+                        }
+
+                        HStack(spacing: LauncherSpace.xs) {
+                            LauncherStatusDot(tone: isCheckingUpdates ? .warning : .success)
+                            Text(updateMessage)
+                                .textStyle(.micro, tone: .tertiary)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+
+                        Text("基于 SwiftUI 构建 · 设计系统 v0.2")
+                            .textStyle(.micro, tone: .tertiary)
                     }
-
-                    Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-
-                HStack(spacing: LauncherSpace.xs) {
-                    LauncherStatusDot(tone: isCheckingUpdates ? .warning : .success)
-                    Text(updateMessage)
-                        .textStyle(.micro, tone: .tertiary)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-
-                Text("基于 SwiftUI 构建 · 设计系统 v0.2")
-                    .textStyle(.micro, tone: .tertiary)
             }
         }
     }

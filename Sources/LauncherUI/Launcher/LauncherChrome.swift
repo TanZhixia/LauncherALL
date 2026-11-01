@@ -27,11 +27,11 @@ public struct LauncherAppPage<Content: View>: View {
         VStack(alignment: .leading, spacing: LauncherSpace.xl) {
             content()
         }
-        .frame(maxWidth: 1220, alignment: .leading)
+        .frame(maxWidth: 1240, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.horizontal, LauncherSpace.xxl)
-        .padding(.top, LauncherSpace.xl)
-        .padding(.bottom, LauncherSpace.xxxl)
+        .padding(.top, LauncherSpace.lg)
+        .padding(.bottom, LauncherSpace.lg)
     }
 }
 
@@ -230,5 +230,127 @@ public struct LauncherTabButton: View {
         .help("\(tab.title)（\(tab.shortcut)）")
         .accessibilityLabel(tab.title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+
+// MARK: - 页面内二级导航
+
+/// 页面内二级导航的一项。
+public struct LauncherSectionItem: Identifiable, Equatable {
+    public let id: String
+    public let title: String
+    public let systemImage: String
+    public let badge: String?
+
+    public init(id: String, title: String, systemImage: String, badge: String? = nil) {
+        self.id = id
+        self.title = title
+        self.systemImage = systemImage
+        self.badge = badge
+    }
+}
+
+/// 竖排分区导航：每个一级页面内部再分几个分区，一次只显示一个，保证最小窗口下无需滚动。
+public struct LauncherSectionRail: View {
+    @Environment(\.launcherTheme) private var theme
+    private let items: [LauncherSectionItem]
+    private let selection: Binding<String>
+    private let header: String?
+    private let width: CGFloat
+
+    public init(
+        items: [LauncherSectionItem],
+        selection: Binding<String>,
+        header: String? = nil,
+        width: CGFloat = 168
+    ) {
+        self.items = items
+        self.selection = selection
+        self.header = header
+        self.width = width
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
+            if let header {
+                LauncherLabel(header)
+                    .padding(.horizontal, LauncherSpace.sm)
+                    .padding(.bottom, LauncherSpace.xs)
+            }
+            ForEach(items) { item in
+                row(for: item)
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(width: width, alignment: .leading)
+    }
+
+    private func row(for item: LauncherSectionItem) -> some View {
+        let isSelected = selection.wrappedValue == item.id
+        return Button {
+            withAnimation(LauncherMotion.spring) {
+                selection.wrappedValue = item.id
+            }
+        } label: {
+            HStack(spacing: LauncherSpace.sm) {
+                Image(systemName: item.systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isSelected ? theme.colors.accent : theme.colors.textTertiary)
+                    .frame(width: 16)
+                Text(item.title)
+                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
+                    .foregroundStyle(isSelected ? theme.colors.textPrimary : theme.colors.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if let badge = item.badge {
+                    LauncherBadge(badge, tone: isSelected ? .accent : .neutral)
+                }
+            }
+            .padding(.horizontal, LauncherSpace.sm)
+            .frame(height: 30)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
+                    .fill(isSelected ? theme.colors.surfaceActive : .clear)
+            }
+            .overlay(alignment: .leading) {
+                Capsule(style: .continuous)
+                    .fill(theme.colors.accent)
+                    .frame(width: 2)
+                    .padding(.vertical, 6)
+                    .opacity(isSelected ? 1 : 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .launcherPointer()
+        .accessibilityLabel(item.title)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// 二级导航 + 竖向分割线 + 内容区，页面统一用这个布局。
+public struct LauncherSectionLayout<Content: View>: View {
+    @Environment(\.launcherTheme) private var theme
+    private let rail: AnyView
+    private let content: () -> Content
+
+    public init<Rail: View>(@ViewBuilder rail: () -> Rail, @ViewBuilder content: @escaping () -> Content) {
+        self.rail = AnyView(rail())
+        self.content = content
+    }
+
+    public var body: some View {
+        HStack(alignment: .top, spacing: LauncherSpace.lg) {
+            rail
+            Rectangle()
+                .fill(theme.colors.stroke)
+                .frame(width: 1)
+                .frame(maxHeight: .infinity)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

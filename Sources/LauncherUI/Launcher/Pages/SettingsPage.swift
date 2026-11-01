@@ -2,11 +2,17 @@ import SwiftUI
 
 // MARK: - 设置页
 
-/// 设置页：启动 / Java 运行时 / 性能 / 更新与语言 / 外观 / 账户 / 关于 + 底部保存条。
+/// 设置页：页内七个分区（启动 / Java / 性能 / 更新 / 外观 / 账户 / 关于），
+/// 一次只渲染一个分区，最小窗口（1080×720）下无需纵向滚动。
 /// 只做 UI：交互全部由页面内 `@State` 模拟，外观参数直接绑定 `LauncherThemeManager`。
 public struct SettingsPage: View {
     @Environment(\.launcherTheme) private var theme
     @Environment(LauncherThemeManager.self) private var themeManager
+
+    // MARK: 分区
+
+    /// 当前分区 id
+    @State private var section = "general"
 
     // MARK: 启动
 
@@ -44,10 +50,21 @@ public struct SettingsPage: View {
     @State private var updateStatus = "已是最新版本 v0.2.0"
     @State private var logHint = ""
 
-    // MARK: 底部保存条
+    // MARK: 保存条
 
     @State private var saveHint = "所有修改会自动保存"
     @State private var saveHintIsSuccess = false
+
+    /// 二级导航分区（rail 顺序）
+    private let sections: [LauncherSectionItem] = [
+        LauncherSectionItem(id: "general", title: "启动", systemImage: "play.rectangle.fill"),
+        LauncherSectionItem(id: "java", title: "Java 运行时", systemImage: "cup.and.saucer.fill"),
+        LauncherSectionItem(id: "performance", title: "性能", systemImage: "speedometer"),
+        LauncherSectionItem(id: "update", title: "更新与语言", systemImage: "arrow.triangle.2.circlepath"),
+        LauncherSectionItem(id: "appearance", title: "外观", systemImage: "paintpalette.fill"),
+        LauncherSectionItem(id: "account", title: "账户", systemImage: "person.crop.circle.fill"),
+        LauncherSectionItem(id: "about", title: "关于", systemImage: "info.circle.fill")
+    ]
 
     /// 创建设置页。
     public init() {}
@@ -55,35 +72,38 @@ public struct SettingsPage: View {
     public var body: some View {
         LauncherAppPage {
             LauncherPageHeader(title: "设置", subtitle: "启动行为、Java 运行时、性能与外观")
-                .padding(.bottom, LauncherSpace.xxs)
 
-            HStack(alignment: .top, spacing: LauncherSpace.lg) {
-                // 主栏：启动 / Java / 性能 / 更新与语言
-                VStack(spacing: LauncherSpace.lg) {
-                    launchCard
-                    javaCard
-                    performanceCard
-                    updateCard
+            LauncherSectionLayout {
+                LauncherSectionRail(items: sections, selection: $section, header: nil)
+            } content: {
+                VStack(alignment: .leading, spacing: LauncherSpace.md) {
+                    sectionContent
+                    // 单分区内容较短时把保存条压到内容区底部常驻（滚动模式下自然贴在内容下方）
+                    Spacer(minLength: LauncherSpace.md)
+                    saveBar
                 }
-                .frame(maxWidth: .infinity)
-
-                // 侧栏：外观 / 账户 / 关于
-                VStack(spacing: LauncherSpace.lg) {
-                    appearanceCard
-                    accountCard
-                    aboutCard
-                }
-                .frame(width: 380)
             }
+        }
+    }
 
-            saveBar
+    /// 当前分区的内容卡片。
+    @ViewBuilder
+    private var sectionContent: some View {
+        switch section {
+        case "java": javaSection
+        case "performance": performanceSection
+        case "update": updateSection
+        case "appearance": appearanceSection
+        case "account": accountSection
+        case "about": aboutSection
+        default: generalSection
         }
     }
 
     // MARK: - 1. 启动
 
-    /// 启动区块：游戏目录、版本隔离、启动后行为、启动前检查。
-    private var launchCard: some View {
+    /// 启动分区：游戏目录、版本隔离、启动后最小化、启动前检查更新。
+    private var generalSection: some View {
         settingsCard(
             "启动",
             subtitle: "游戏目录与启动时的默认行为",
@@ -96,7 +116,7 @@ public struct SettingsPage: View {
                 ) {
                     HStack(spacing: LauncherSpace.sm) {
                         LauncherTextField("游戏目录", text: $gameDirectory, systemImage: "folder")
-                            .frame(maxWidth: 440)
+                            .frame(maxWidth: 360)
                         LauncherButton(
                             "浏览…",
                             systemImage: "folder.badge.plus",
@@ -133,8 +153,8 @@ public struct SettingsPage: View {
 
     // MARK: - 2. Java 运行时
 
-    /// Java 区块：运行时三选一、安装路径、重新检测。
-    private var javaCard: some View {
+    /// Java 分区：三个运行时横排、安装路径、重新检测。
+    private var javaSection: some View {
         settingsCard(
             "Java 运行时",
             subtitle: "一个实例只绑定一个运行时，切换后会在下次启动时生效",
@@ -183,7 +203,7 @@ public struct SettingsPage: View {
         }
     }
 
-    /// Java 区块右上角状态：检测中 / 可用数量。
+    /// Java 分区右上角状态：检测中 / 可用数量。
     private var javaAccessory: some View {
         HStack(spacing: LauncherSpace.sm) {
             if isDetectingJava {
@@ -199,11 +219,12 @@ public struct SettingsPage: View {
 
     // MARK: - 3. 性能
 
-    /// 性能区块：最大内存、渲染线程、JVM 参数。
-    private var performanceCard: some View {
+    /// 性能分区：最大内存、渲染线程、JVM 参数。
+    private var performanceSection: some View {
         settingsCard(
             "性能",
-            subtitle: "内存、渲染线程与 JVM 参数，修改后下次启动生效"
+            subtitle: "修改后下次启动生效",
+            accessory: AnyView(LauncherMonoText("建议 4096 MB", tone: .tertiary, size: 11))
         ) {
             VStack(alignment: .leading, spacing: LauncherSpace.md) {
                 settingRow(title: "最大内存", subtitle: memoryHint) {
@@ -212,7 +233,7 @@ public struct SettingsPage: View {
                         range: 1024...8192,
                         valueText: "\(Int(memory)) MB"
                     )
-                    .frame(width: 340)
+                    .frame(width: 300)
                 }
 
                 LauncherDivider()
@@ -222,7 +243,7 @@ public struct SettingsPage: View {
                     subtitle: "建议 2 ~ 4 个，数量过多反而增加调度开销"
                 ) {
                     LauncherStepper(value: $renderThreads, range: 1...16, unit: "线程")
-                        .frame(width: 220)
+                        .frame(width: 200)
                 }
 
                 LauncherDivider()
@@ -244,8 +265,8 @@ public struct SettingsPage: View {
 
     // MARK: - 4. 更新与语言
 
-    /// 更新与语言区块：更新通道、自动检查、界面语言。
-    private var updateCard: some View {
+    /// 更新与语言分区：更新通道、自动检查、界面语言。
+    private var updateSection: some View {
         settingsCard(
             "更新与语言",
             subtitle: "更新通道决定接收到的版本类型",
@@ -284,15 +305,15 @@ public struct SettingsPage: View {
 
     // MARK: - 5. 外观
 
-    /// 外观区块：主题选择 + 边框强度 + 圆角缩放 + 实时预览（全部绑定 ThemeManager）。
-    private var appearanceCard: some View {
+    /// 外观分区：两套主题色块、边框强度、圆角缩放进与实时预览（全部绑定 ThemeManager）。
+    private var appearanceSection: some View {
         settingsCard(
             "外观",
             subtitle: "主题与全局外观参数，修改立即生效",
             accessory: AnyView(LauncherBadge(currentThemeName, tone: .accent))
         ) {
             VStack(alignment: .leading, spacing: LauncherSpace.md) {
-                VStack(spacing: LauncherSpace.sm) {
+                HStack(spacing: LauncherSpace.md) {
                     ForEach(themeManager.presets) { preset in
                         themeOption(preset)
                     }
@@ -300,26 +321,19 @@ public struct SettingsPage: View {
 
                 LauncherDivider()
 
-                VStack(alignment: .leading, spacing: LauncherSpace.xs) {
+                VStack(alignment: .leading, spacing: LauncherSpace.sm) {
                     LauncherSlider(
                         value: borderStrengthBinding,
                         range: 0.4...1.6,
                         label: "边框强度",
                         valueText: "\(borderStrengthText)×"
                     )
-                    Text("调节面板与分割线的描边可见度")
-                        .textStyle(.micro, tone: .tertiary)
-                }
-
-                VStack(alignment: .leading, spacing: LauncherSpace.xs) {
                     LauncherSlider(
                         value: cornerScaleBinding,
                         range: 0.6...1.4,
                         label: "圆角缩放",
                         valueText: "\(cornerScaleText)×"
                     )
-                    Text("按比例缩放全站圆角")
-                        .textStyle(.micro, tone: .tertiary)
                 }
 
                 LauncherDivider()
@@ -351,8 +365,10 @@ public struct SettingsPage: View {
                 VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
                     Text(preset.name)
                         .textStyle(.bodyStrong)
+                        .lineLimit(1)
                     Text(preset.tagline)
                         .textStyle(.micro, tone: .tertiary)
+                        .lineLimit(1)
                 }
 
                 Spacer(minLength: LauncherSpace.sm)
@@ -382,37 +398,34 @@ public struct SettingsPage: View {
     /// 外观实时预览：圆角与描边直接读取 ThemeManager 的乘数，拖动滑块即可看到变化。
     private var appearancePreview: some View {
         let radius = themeManager.radius(LauncherRadius.md)
-        return VStack(alignment: .leading, spacing: LauncherSpace.xs) {
-            Text("实时预览")
-                .textStyle(.micro, tone: .tertiary)
-            RoundedRectangle(cornerRadius: radius, style: .continuous)
-                .fill(theme.colors.surfaceSubtle)
-                .overlay {
-                    RoundedRectangle(cornerRadius: radius, style: .continuous)
-                        .strokeBorder(theme.colors.stroke, lineWidth: 1)
+        return RoundedRectangle(cornerRadius: radius, style: .continuous)
+            .fill(theme.colors.surfaceSubtle)
+            .overlay {
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .strokeBorder(theme.colors.stroke, lineWidth: 1)
+            }
+            .overlay {
+                HStack(spacing: LauncherSpace.sm) {
+                    LauncherLabel("实时预览")
+                    LauncherStatusDot(tone: .success)
+                    Text("面板描边与圆角")
+                        .textStyle(.caption, tone: .secondary)
+                    Spacer(minLength: 0)
+                    LauncherMonoText(
+                        "\(Int(radius))pt · \(borderStrengthText)×",
+                        tone: .tertiary,
+                        size: 10
+                    )
                 }
-                .overlay {
-                    HStack(spacing: LauncherSpace.sm) {
-                        LauncherStatusDot(tone: .success)
-                        Text("面板描边与圆角")
-                            .textStyle(.caption, tone: .secondary)
-                        Spacer(minLength: 0)
-                        LauncherMonoText(
-                            "\(Int(radius))pt · \(borderStrengthText)×",
-                            tone: .tertiary,
-                            size: 10
-                        )
-                    }
-                    .padding(.horizontal, LauncherSpace.md)
-                }
-                .frame(height: LauncherControl.large)
-        }
+                .padding(.horizontal, LauncherSpace.md)
+            }
+            .frame(height: LauncherControl.large)
     }
 
     // MARK: - 6. 账户
 
-    /// 账户区块：头像、名称 / 类型 / 上次登录 + 切换与登出。
-    private var accountCard: some View {
+    /// 账户分区：头像、名称 / 类型、登录方式与切换 / 登出。
+    private var accountSection: some View {
         settingsCard(
             "账户",
             subtitle: "账户信息仅保存在本机钥匙串",
@@ -440,16 +453,22 @@ public struct SettingsPage: View {
                         Text(accountDisplayType)
                             .textStyle(.micro, tone: .tertiary)
                             .lineLimit(1)
-                        Text(accountLastLogin)
-                            .textStyle(.micro, tone: .tertiary)
-                            .lineLimit(1)
                     }
 
                     Spacer(minLength: 0)
                 }
 
-                HStack(spacing: LauncherSpace.sm) {
-                    if isSignedIn {
+                LauncherDivider()
+
+                VStack(spacing: LauncherSpace.xs) {
+                    LauncherKeyValueRow(key: "登录方式", value: "微软账户 · 正版", isMono: false)
+                    LauncherKeyValueRow(key: "上次登录", value: accountLastLogin, isMono: true)
+                    LauncherKeyValueRow(key: "访问令牌", value: isSignedIn ? "有效 · 12 天后刷新" : "已清除", isMono: true)
+                }
+
+                if isSignedIn {
+                    // 分支放在 HStack 外层：条件内容直接塞进 HStack 会被分到较窄的提案宽度，导致按钮文字被截断
+                    HStack(spacing: LauncherSpace.sm) {
                         LauncherButton(
                             "切换账户",
                             systemImage: "arrow.triangle.2.circlepath",
@@ -458,6 +477,7 @@ public struct SettingsPage: View {
                         ) {
                             switchAccount()
                         }
+                        .fixedSize()
                         LauncherButton(
                             "退出登录",
                             systemImage: "rectangle.portrait.and.arrow.right",
@@ -466,7 +486,11 @@ public struct SettingsPage: View {
                         ) {
                             signOut()
                         }
-                    } else {
+                        .fixedSize()
+                        Spacer(minLength: 0)
+                    }
+                } else {
+                    HStack(spacing: LauncherSpace.sm) {
                         LauncherButton(
                             "登录",
                             systemImage: "person.badge.key.fill",
@@ -475,8 +499,9 @@ public struct SettingsPage: View {
                         ) {
                             signIn()
                         }
+                        .fixedSize()
+                        Spacer(minLength: 0)
                     }
-                    Spacer(minLength: 0)
                 }
             }
         }
@@ -484,15 +509,15 @@ public struct SettingsPage: View {
 
     // MARK: - 7. 关于
 
-    /// 关于区块：版本 / 构建 / 提交 + 检查更新与日志入口。
-    private var aboutCard: some View {
+    /// 关于分区：版本 / 构建 / 提交 + 检查更新与日志入口。
+    private var aboutSection: some View {
         settingsCard(
             "关于",
             subtitle: "方块启动器 · 开源 UI 模板",
             accessory: AnyView(LauncherMonoText("v0.2.0", tone: .tertiary, size: 10))
         ) {
             VStack(alignment: .leading, spacing: LauncherSpace.md) {
-                VStack(spacing: LauncherSpace.sm) {
+                VStack(spacing: LauncherSpace.xs) {
                     LauncherKeyValueRow(key: "版本", value: "v0.2.0")
                     LauncherKeyValueRow(key: "构建", value: "2026.11.01.1380")
                     LauncherKeyValueRow(key: "提交", value: "8f3c2a1")
@@ -518,11 +543,10 @@ public struct SettingsPage: View {
                         openLog()
                     }
                     Spacer(minLength: 0)
+                    Text(updateStatus)
+                        .textStyle(.micro, tone: .tertiary)
+                        .lineLimit(1)
                 }
-
-                Text(updateStatus)
-                    .textStyle(.micro, tone: .tertiary)
-                    .lineLimit(1)
 
                 if !logHint.isEmpty {
                     Text(logHint)
@@ -533,9 +557,9 @@ public struct SettingsPage: View {
         }
     }
 
-    // MARK: - 8. 底部保存条
+    // MARK: - 保存条（右列常驻）
 
-    /// 底部操作条：保存 / 恢复默认 + 右侧自动保存提示。
+    /// 保存条：位于右列内容下方常驻，保存 / 恢复默认 + 右侧自动保存提示。
     private var saveBar: some View {
         LauncherCard(level: .regular, padding: LauncherSpace.md) {
             HStack(spacing: LauncherSpace.md) {
@@ -557,7 +581,7 @@ public struct SettingsPage: View {
 
     // MARK: - 通用布局
 
-    /// 设置卡片：面板 + 区块标题 + 内容，保证所有区块节奏一致。
+    /// 分区卡片：面板 + 区块标题 + 内容，保证各分区节奏一致。
     private func settingsCard<Content: View>(
         _ title: String,
         subtitle: String,
@@ -585,7 +609,7 @@ public struct SettingsPage: View {
                 if let subtitle {
                     Text(subtitle)
                         .textStyle(.micro, tone: .tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
                 }
             }
             Spacer(minLength: LauncherSpace.md)
@@ -676,13 +700,13 @@ public struct SettingsPage: View {
 
     /// 账户类型说明。
     private var accountDisplayType: String {
-        isSignedIn ? "微软账户 · 正版" : "点击「登录」使用微软账户验证"
+        isSignedIn ? "微软账户 · 正版 · 已开启双重验证" : "点击「登录」使用微软账户验证"
     }
 
     /// 上次登录时间。
     private var accountLastLogin: String {
         guard isSignedIn else { return "尚未登录" }
-        return accountSlot == 0 ? "上次登录 今天 09:12" : "上次登录 昨天 21:40"
+        return accountSlot == 0 ? "今天 09:12" : "昨天 21:40"
     }
 
     // MARK: - 绑定

@@ -17,6 +17,28 @@ LauncherAppShell（窗口壳：顶部导航栏 + 内容区）
 
 设计器入口：`更多 → 打开设计系统` 以 sheet 打开 `LauncherShellView`（既有组件画廊）。
 
+## 1.1 二级导航（每个一级页面内）
+
+每个一级页面内部再放一条**竖排分区导航**，一次只显示一个分区；
+目标是 **最小窗口 1080×720 下不需要纵向滚动**（内容区可用高度约 560pt）。
+
+```swift
+LauncherSectionLayout {
+    LauncherSectionRail(items: sections, selection: $section, header: "设置")
+} content: {
+    switch section { case "java": javaSection; default: generalSection }
+}
+```
+
+| 一级页面 | 分区 |
+|---|---|
+| 启动 | 概览 / 实例 / 账户与社区 |
+| 下载 | 版本库 / 整合包 / 下载任务 |
+| 设置 | 启动 / Java / 性能 / 更新 / 外观 / 账户 / 关于 |
+| 更多 | 工具 / 快捷操作 / 快捷键 / 关于 |
+
+分区内容要求：单个分区高度 ≤ 540pt（宽度约 820pt），超出就再拆一个分区，而不是让它滚动。
+
 ## 2. 可复用资产（Lead 已写好）
 
 ### 页面容器

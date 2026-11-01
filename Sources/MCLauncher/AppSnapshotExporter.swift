@@ -21,18 +21,23 @@ enum AppSnapshotExporter {
             manager.borderStrength = 1.0
             manager.cornerScale = 1.0
 
+            let sizes: [(width: CGFloat, height: CGFloat, prefix: String)] = [
+                (1440, 900, "app-"),
+                (1080, 720, "app-min-")   // 最小窗口验收：不应出现纵向滚动
+            ]
             for tab in LauncherTab.allCases {
+              for size in sizes {
                 let view = LauncherAppShell(initialTab: tab)
                     .launcherThemeEnvironment(manager)
                     .environment(\.colorScheme, theme.scheme)
                     .environment(\.launcherSnapshotMode, true)
-                    .frame(width: 1440, height: 900, alignment: .topLeading)
+                    .frame(width: size.width, height: size.height, alignment: .topLeading)
                     .clipped()
                     .background(theme.colors.canvas)
 
                 let renderer = ImageRenderer(content: view)
                 renderer.scale = 1.5
-                renderer.proposedSize = ProposedViewSize(width: 1440, height: 900)
+                renderer.proposedSize = ProposedViewSize(width: size.width, height: size.height)
                 guard let image = renderer.nsImage,
                       let tiff = image.tiffRepresentation,
                       let bitmap = NSBitmapImageRep(data: tiff),
@@ -41,7 +46,7 @@ enum AppSnapshotExporter {
                     failures += 1
                     continue
                 }
-                let url = directory.appendingPathComponent("app-\(theme.id)-\(tab.rawValue).png")
+                let url = directory.appendingPathComponent("\(size.prefix)\(theme.id)-\(tab.rawValue).png")
                 do {
                     try png.write(to: url)
                     exported += 1
@@ -49,6 +54,7 @@ enum AppSnapshotExporter {
                     print("✗ 写入失败：\(url.lastPathComponent)")
                     failures += 1
                 }
+              }
             }
         }
         defaults.removePersistentDomain(forName: suite)
