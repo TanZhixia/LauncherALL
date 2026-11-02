@@ -9,6 +9,15 @@
 
 **当前状态：不只是 UI 演示。** 启动链路（版本清单 → 安装 → Java 检测 → 启动 → 日志）走真实系统调用与网络；四个页面里的按钮、菜单、开关、滑杆、下拉、列表行都接真实行为或真实文件/网络操作，不再有"演示 / 假 sleep / 待接入"的占位交互。
 
+## 宣传片
+
+[![LauncherALL 宣传片](docs/promo/poster.png)](docs/promo/LauncherALL-promo.mp4)
+
+一分钟看懂 LauncherALL：Minecraft 启动器 + DSH Web UI 启动器，共用一套壳与设计系统。
+
+- 在线观看 / 下载：[docs/promo/LauncherALL-promo.mp4](docs/promo/LauncherALL-promo.mp4)（1080p，含中文旁白）
+- 截图：[Minecraft 启动页](docs/promo/minecraft-launch.png) · [正版账户](docs/promo/minecraft-account.png) · [DSH 启动器](docs/promo/dsh-launcher.png) · [DSH 插件市场](docs/promo/dsh-plugin-market.png)
+
 ## 快速开始
 
 ```bash
