@@ -14,7 +14,6 @@ public struct InstalledVersion: Identifiable, Equatable, Sendable {
     }
 
     public var sizeDescription: String {
-        let fileManager = FileManager.default
         guard let values = try? jsonURL.deletingLastPathComponent().resourceValues(forKeys: [.totalFileAllocatedSizeKey]),
               let size = values.totalFileAllocatedSize else { return "—" }
         return ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)

@@ -2,21 +2,41 @@ import SwiftUI
 import AppKit
 import LauncherUI
 
-/// 方块启动器 App。
+/// LauncherALL App：Minecraft 启动器 + DSH 启动器共用一个壳。
 @MainActor
 struct MCLauncherApp: App {
     @State private var themeManager = LauncherThemeManager()
-    @State private var engine = LauncherEngine()
+    @State private var engine: LauncherEngine
+    @State private var accountStore: AccountStore
+    @State private var dshVersions: DSHVersionStore
+    @State private var dshProcess: DSHProcessController
+    @State private var dshPlugins: DSHPluginStore
+
+    init() {
+        let store = AccountStore()
+        _accountStore = State(initialValue: store)
+        _engine = State(initialValue: LauncherEngine(accountStore: store))
+        _dshVersions = State(initialValue: DSHVersionStore())
+        _dshProcess = State(initialValue: DSHProcessController())
+        _dshPlugins = State(initialValue: DSHPluginStore())
+    }
 
     var body: some Scene {
-        WindowGroup("方块启动器") {
+        WindowGroup("LauncherALL") {
             LauncherAppShell()
                 .environment(engine)
+                .environment(accountStore)
+                .environment(dshVersions)
+                .environment(dshProcess)
+                .environment(dshPlugins)
                 .launcherThemeEnvironment(themeManager)
                 .frame(minWidth: 1080, minHeight: 720)
                 .background { LauncherWindowConfigurator() }
                 .task {
                     await engine.refreshEnvironment()
+                    await accountStore.refreshSelectedIfNeeded()
+                    dshVersions.refreshInstalled()
+                    dshPlugins.loadCachedCatalogIfNeeded()
                 }
         }
         .windowStyle(.hiddenTitleBar)
@@ -43,6 +63,12 @@ func runMain(arguments: [String]) async -> Int32 {
     if let index = arguments.firstIndex(of: "--export-xml-snapshots") {
         let output = index + 1 < arguments.count ? arguments[index + 1] : "Snapshots/XML"
         return XMLTool.exportSnapshots(directory: output)
+    }
+    if arguments.contains("--dsh-check") {
+        return await LauncherCLI.dshCheck()
+    }
+    if arguments.contains("--auth-check") {
+        return await LauncherCLI.authCheck()
     }
     if arguments.contains("--detect-java") {
         return LauncherCLI.detectJava()

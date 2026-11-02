@@ -149,20 +149,32 @@ public struct LauncherInlineStat: View {
     }
 }
 
-/// 账户胶囊：头像 + 名字 + 在线点。
+/// 账户胶囊：头像 + 名字 + 在线点。默认展示离线账户（启动器不接正版登录）。
 public struct LauncherAccountChip: View {
     @Environment(\.launcherTheme) private var theme
     private let account: LauncherAccount
     private let showsChevron: Bool
+    /// 自定义头像（正版账户传 crafatar 头像；离线账户留空用首字母头像）。
+    private let avatar: AnyView?
 
-    public init(account: LauncherAccount = LauncherDemoData.account, showsChevron: Bool = true) {
+    public init(
+        account: LauncherAccount? = nil,
+        showsChevron: Bool = true,
+        avatar: AnyView? = nil
+    ) {
         self.account = account
+            ?? LauncherAccount(name: "Steve", type: "离线账户", lastLogin: "—", isOnline: false)
         self.showsChevron = showsChevron
+        self.avatar = avatar
     }
 
     public var body: some View {
         HStack(spacing: LauncherSpace.sm) {
-            LauncherAvatar(name: account.name, systemImage: "person.fill", size: 26, isOnline: account.isOnline)
+            if let avatar {
+                avatar
+            } else {
+                LauncherAvatar(name: account.name, systemImage: "person.fill", size: 26, isOnline: account.isOnline)
+            }
             VStack(alignment: .leading, spacing: 0) {
                 Text(account.name)
                     .font(LauncherTextStyle.caption.font.weight(.medium))
@@ -174,7 +186,8 @@ public struct LauncherAccountChip: View {
                     .lineLimit(1)
             }
             if showsChevron {
-                Image(systemName: "chevron.down")
+                // 点击跳转「设置 → 账户」，用右箭头表达导航而不是下拉
+                Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(theme.colors.textTertiary)
             }

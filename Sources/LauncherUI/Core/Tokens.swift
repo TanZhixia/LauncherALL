@@ -112,6 +112,8 @@ public struct LauncherColors: Equatable {
     public var danger: Color
     public var onDanger: Color
     public var focusRing: Color
+    /// 浮层遮罩（对话框 / 输入框背后的压暗层）
+    public var scrim: Color
 
     public init(
         canvas: Color,
@@ -133,7 +135,8 @@ public struct LauncherColors: Equatable {
         warning: Color,
         danger: Color,
         onDanger: Color,
-        focusRing: Color
+        focusRing: Color,
+        scrim: Color = Color.black.opacity(0.28)
     ) {
         self.canvas = canvas
         self.surface = surface
@@ -155,6 +158,7 @@ public struct LauncherColors: Equatable {
         self.danger = danger
         self.onDanger = onDanger
         self.focusRing = focusRing
+        self.scrim = scrim
     }
 }
 

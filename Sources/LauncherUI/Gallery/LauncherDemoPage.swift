@@ -70,7 +70,7 @@ public struct LauncherDemoPage: View {
                         .textStyle(.headline)
                     HStack(spacing: LauncherSpace.xs) {
                         LauncherStatusDot(tone: .success)
-                        Text("微软账户 · 正版 · 在线")
+                        Text("离线账户 · 示例数据")
                             .textStyle(.micro, tone: .secondary)
                     }
                 }
@@ -213,8 +213,8 @@ public struct LauncherDemoPage: View {
                         Text("Steve_2026")
                             .textStyle(.bodyStrong)
                         HStack(spacing: LauncherSpace.xs) {
-                            LauncherBadge("正版", tone: .success)
-                            Text("Microsoft 账户")
+                            LauncherBadge("离线", tone: .neutral)
+                            Text("离线账户")
                                 .textStyle(.micro, tone: .secondary)
                         }
                     }

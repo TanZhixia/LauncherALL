@@ -14,7 +14,13 @@ enum AppSnapshotExporter {
         defaults.removePersistentDomain(forName: suite)
         let manager = LauncherThemeManager(presets: LauncherThemes.all, defaults: defaults)
 
-        let engine = LauncherEngine(settings: LauncherSettings(defaults: defaults))
+        let settings = LauncherSettings(defaults: defaults)
+        let engine = LauncherEngine(settings: settings, accountStore: AccountStore(settings: settings, tokenStore: InMemoryAuthTokenStore()))
+        let dshPaths = DSHPaths(root: FileManager.default.temporaryDirectory
+            .appendingPathComponent("launcher-snapshot-dsh", isDirectory: true))
+        let dshVersions = DSHVersionStore(settings: settings, paths: dshPaths)
+        let dshProcess = DSHProcessController(settings: settings, paths: dshPaths)
+        let dshPlugins = DSHPluginStore(settings: settings, paths: dshPaths)
         await engine.refreshEnvironment()
 
         var failures = 0
@@ -32,6 +38,10 @@ enum AppSnapshotExporter {
               for size in sizes {
                 let view = LauncherAppShell(initialTab: tab)
                     .environment(engine)
+                    .environment(engine.accountStore)
+                    .environment(dshVersions)
+                    .environment(dshProcess)
+                    .environment(dshPlugins)
                     .launcherThemeEnvironment(manager)
                     .environment(\.colorScheme, theme.scheme)
                     .environment(\.launcherSnapshotMode, true)
@@ -56,6 +66,45 @@ enum AppSnapshotExporter {
                     exported += 1
                 } catch {
                     print("✗ 写入失败：\(url.lastPathComponent)")
+                    failures += 1
+                }
+              }
+            }
+
+            // DSH 启动器的四个页面（与 Minecraft 同尺寸/同主题）
+            for tab in LauncherTab.allCases {
+              for size in sizes {
+                let view = LauncherAppShell(initialTab: tab, initialProduct: .dsh)
+                    .environment(engine)
+                    .environment(engine.accountStore)
+                    .environment(dshVersions)
+                    .environment(dshProcess)
+                    .environment(dshPlugins)
+                    .launcherThemeEnvironment(manager)
+                    .environment(\.colorScheme, theme.scheme)
+                    .environment(\.launcherSnapshotMode, true)
+                    .frame(width: size.width, height: size.height, alignment: .topLeading)
+                    .clipped()
+                    .background(theme.colors.canvas)
+
+                let renderer = ImageRenderer(content: view)
+                renderer.scale = 1.5
+                renderer.proposedSize = ProposedViewSize(width: size.width, height: size.height)
+                guard let image = renderer.nsImage,
+                      let tiff = image.tiffRepresentation,
+                      let bitmap = NSBitmapImageRep(data: tiff),
+                      let png = bitmap.representation(using: .png, properties: [:]) else {
+                    print("✗ 渲染失败：\(theme.id)-dsh-\(tab.rawValue)")
+                    failures += 1
+                    continue
+                }
+                let filename = "\(size.prefix)\(theme.id)-dsh-\(tab.rawValue).png"
+                let url = directory.appendingPathComponent(filename)
+                do {
+                    try png.write(to: url)
+                    exported += 1
+                } catch {
+                    print("✗ 写入失败：\(filename)")
                     failures += 1
                 }
               }

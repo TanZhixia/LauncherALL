@@ -4,6 +4,69 @@ import LauncherUI
 /// 启动器后端命令行工具：环境检测、版本列表、安装、启动命令预演。
 @MainActor
 enum LauncherCLI {
+    /// `--auth-check`：向微软申请一次设备码，验证正版登录端点与客户端 ID 可用（不轮询、不落盘）。
+    static func authCheck() async -> Int32 {
+        let service = MicrosoftAuthService()
+        do {
+            let code = try await service.requestDeviceCode()
+            print("✓ 设备码申请成功")
+            print("  验证码：\(code.userCode)")
+            print("  浏览地址：\(code.verificationURL.absoluteString)")
+            print("  有效期：\(code.expiresIn) 秒 · 轮询间隔：\(code.pollInterval) 秒")
+            print("  （本次只验证申请流程，未轮询授权，也不会写入任何账户）")
+            return 0
+        } catch {
+            print("✗ 设备码申请失败：\(error.localizedDescription)")
+            return 1
+        }
+    }
+
+    /// `--dsh-check`：检查 DSH 环境、已安装版本，并真实启动一次 Web UI（不打开浏览器）后停止。
+    static func dshCheck() async -> Int32 {
+        let settings = LauncherSettings(defaults: UserDefaults(suiteName: "launcher.cli.dsh") ?? .standard)
+        let paths = DSHPaths.default
+        let versions = DSHVersionStore(settings: settings, paths: paths)
+        versions.refreshInstalled()
+
+        print("DSH 环境：\(versions.environmentText)")
+        print("DSH 目录：\(paths.root.path)")
+        await versions.refreshCatalog()
+        if let catalog = versions.catalog {
+            print("远程版本：\(catalog.versions.count) 个（latest \(catalog.latest()?.version ?? "?")）")
+        } else {
+            print("远程版本：拉取失败（\(versions.catalogState.errorText ?? "未知错误")）")
+        }
+        if versions.installed.isEmpty {
+            print("✗ 还没有安装任何 DSH 版本（可在启动器 DSH → 下载 里安装）")
+            return 1
+        }
+        for version in versions.installed {
+            let size = ByteCountFormatter.string(fromByteCount: version.sizeBytes ?? 0, countStyle: .file)
+            print("  - \(version.version)  \(size)  \(version.path)")
+        }
+        guard let selected = versions.selectedInstalledVersion ?? versions.installed.first else {
+            return 1
+        }
+
+        let previousAutoOpen = settings.dshAutoOpenBrowser
+        settings.dshAutoOpenBrowser = false
+        defer { settings.dshAutoOpenBrowser = previousAutoOpen }
+        let controller = DSHProcessController(settings: settings, paths: paths)
+        print("… 启动 DSH \(selected.version) Web UI")
+        let started = await controller.start(version: selected)
+        defer { controller.stopSynchronously() }
+        guard started, let url = controller.state.url else {
+            print("✗ 启动失败：\(controller.state)")
+            let tail = controller.logLines.suffix(8).joined(separator: "\n")
+            if !tail.isEmpty { print(tail) }
+            return 1
+        }
+        print("✓ DSH Web UI 已启动：\(url)")
+        print("  端口：\(controller.activePort ?? 0) · 日志：\(paths.logFile(for: selected.version).path)")
+        print("  已停止（本次只验证启动链路，不保留进程）")
+        return 0
+    }
+
     /// `--detect-java`：列出本机 Java 运行时。
     static func detectJava() -> Int32 {
         let runtimes = JavaLocator.detectAll()

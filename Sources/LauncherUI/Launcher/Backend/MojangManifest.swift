@@ -225,15 +225,22 @@ public enum MojangServiceError: LocalizedError {
 }
 
 /// 拉取 Mojang 版本清单与版本详情，并做本地缓存。
+/// `source` 决定下载源：镜像源会把 Mojang 域名重写到 BMCLAPI。
 public final class MojangManifestService {
     public static let manifestURL = URL(string: "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")!
 
     private let installation: MinecraftInstallation
     private let session: URLSession
+    private let source: DownloadSource
 
-    public init(installation: MinecraftInstallation, session: URLSession = .shared) {
+    public init(
+        installation: MinecraftInstallation,
+        session: URLSession = .shared,
+        source: DownloadSource = .active
+    ) {
         self.installation = installation
         self.session = session
+        self.source = source
     }
 
     public var cacheDirectory: URL {
@@ -251,7 +258,7 @@ public final class MojangManifestService {
            let manifest = try? JSONDecoder().decode(VersionManifest.self, from: data) {
             return manifest
         }
-        let (data, response) = try await session.data(from: Self.manifestURL)
+        let (data, response) = try await session.data(from: source.rewrite(Self.manifestURL))
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw MojangServiceError.http(http.statusCode)
         }
@@ -278,7 +285,9 @@ public final class MojangManifestService {
         guard let url = URL(string: summary.url) else {
             throw MojangServiceError.decode("非法版本 URL")
         }
-        let (data, response) = try await session.data(from: url)
+        // 镜像源：版本 JSON 地址同样走镜像
+        let requestURL = source.rewrite(url)
+        let (data, response) = try await session.data(from: requestURL)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
             throw MojangServiceError.http(http.statusCode)
         }
@@ -329,17 +338,28 @@ public final class FileDownloader {
 
     public func download(
         _ task: FileDownloadTask,
+        verifyExisting: Bool = true,
         progress: @escaping @Sendable (Double) -> Void
     ) async throws {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: task.destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Task.checkCancellation()
 
-        // 已存在且校验通过则跳过
-        if fileManager.fileExists(atPath: task.destination.path), let sha1 = task.sha1,
-           let existing = try? Data(contentsOf: task.destination),
-           Self.sha1Hex(existing) == sha1 {
-            progress(1)
-            return
+        // 已存在：默认跳过；verifyExisting 时校验 SHA1（不匹配则重新下载）
+        if fileManager.fileExists(atPath: task.destination.path) {
+            if !verifyExisting {
+                progress(1)
+                return
+            }
+            if let sha1 = task.sha1 {
+                if let existing = try? Data(contentsOf: task.destination), Self.sha1Hex(existing) == sha1 {
+                    progress(1)
+                    return
+                }
+            } else {
+                progress(1)
+                return
+            }
         }
 
         let (bytes, response) = try await session.bytes(from: task.url)
@@ -359,6 +379,11 @@ public final class FileDownloader {
         for try await byte in bytes {
             buffer.append(byte)
             if buffer.count >= 64 * 1024 {
+                if Task.isCancelled {
+                    try? handle.close()
+                    try? fileManager.removeItem(at: temporary)
+                    throw CancellationError()
+                }
                 try handle.write(contentsOf: buffer)
                 written += Int64(buffer.count)
                 buffer.removeAll(keepingCapacity: true)

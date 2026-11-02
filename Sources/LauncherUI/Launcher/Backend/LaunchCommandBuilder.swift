@@ -10,6 +10,8 @@ public struct LaunchOptions: Sendable {
     public let renderThreads: Int
     public let extraJVMArguments: [String]
     public let gameDirectory: URL
+    /// 启动身份：离线 / 正版（为 nil 时按 `playerName` 走离线逻辑，兼容 CLI 与旧调用）。
+    public let account: LaunchAccount?
 
     public init(
         versionID: String,
@@ -18,7 +20,8 @@ public struct LaunchOptions: Sendable {
         memoryMB: Int,
         renderThreads: Int,
         extraJVMArguments: [String],
-        gameDirectory: URL
+        gameDirectory: URL,
+        account: LaunchAccount? = nil
     ) {
         self.versionID = versionID
         self.playerName = playerName
@@ -27,6 +30,7 @@ public struct LaunchOptions: Sendable {
         self.renderThreads = renderThreads
         self.extraJVMArguments = extraJVMArguments
         self.gameDirectory = gameDirectory
+        self.account = account
     }
 }
 
@@ -96,19 +100,24 @@ public enum LaunchCommandBuilder {
         let assetsIndexName = detail.assetIndex?.id ?? detail.assets ?? "legacy"
         let loggingPath = loggingConfigurationPath(detail: detail, installation: installation)
 
+        // 账户身份：正版用档案 UUID / Minecraft 令牌，离线用离线 UUID / accessToken=0
+        let account = options.account ?? .offline(name: options.playerName)
         var values: [String: String] = [
-            "auth_player_name": options.playerName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Steve" : options.playerName,
+            "auth_player_name": account.name,
             "version_name": detail.id,
             "game_directory": options.gameDirectory.path,
             "assets_root": installation.assetsDirectory.path,
             "assets_index_name": assetsIndexName,
-            "auth_uuid": offlineUUID(for: options.playerName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Steve" : options.playerName),
-            "auth_access_token": "0",
+            "auth_uuid": account.commandUUID,
+            "auth_access_token": account.accessToken,
+            "auth_session": account.accessToken,
             "clientid": "",
-            "xuid": "",
-            "user_type": "legacy",
+            // 1.20.5+ 的版本 JSON 使用 ${auth_xuid}，旧版本用 ${xuid}：两个都提供
+            "auth_xuid": account.xuid ?? "",
+            "xuid": account.xuid ?? "",
+            "user_type": account.userType,
             "version_type": detail.type,
-            "user_properties": "{}",
+            "user_properties": account.userProperties,
             "natives_directory": nativesDirectory.path,
             "launcher_name": launcherName,
             "launcher_version": launcherVersion,
@@ -172,23 +181,25 @@ public enum LaunchCommandBuilder {
         return FileManager.default.fileExists(atPath: url.path) ? url.path : nil
     }
 
-    /// 过滤规则并替换变量。
+    /// 过滤规则并替换变量（空值留给 `sanitize` 连同旗标一起清理）。
     static func expand(_ arguments: [VersionDetail.Argument], values: [String: String]) -> [String] {
         arguments
             .filter { RuleEvaluator.isAllowed($0.rules) }
             .flatMap { $0.values }
             .map { substitute($0, values: values) }
-            .filter { !$0.isEmpty }
     }
 
-    /// 清理未能替换的占位参数：去掉含 `${...}` 的参数及其前面的旗标，避免把字面量传给游戏。
+    /// 清理未能替换的占位参数与空值参数：
+    /// - `--flag ${placeholder}`：占位符未替换 → 连同旗标一起丢掉；
+    /// - `--flag ""`：变量被替换为空串 → 连同旗标一起丢掉。
+    /// 避免把字面量或孤立的旗标传给游戏（例如离线模式下的 `--clientId`）。
     static func sanitize(_ arguments: [String]) -> [String] {
         var result: [String] = []
         var index = 0
         while index < arguments.count {
             let argument = arguments[index]
-            if argument.contains("${") {
-                // 形如 --flag ${placeholder}：把前面的旗标一起丢掉
+            if argument.contains("${") || argument.isEmpty {
+                // 形如 --flag ${placeholder} / --flag ""：把前面的旗标一起丢掉
                 if index > 0, arguments[index - 1].hasPrefix("-"), !result.isEmpty {
                     result.removeLast()
                 }
@@ -199,6 +210,12 @@ public enum LaunchCommandBuilder {
             index += 1
         }
         return result
+    }
+
+    /// 把命令里的敏感值（正版 accessToken）替换成掩码，用于日志 / 界面展示。
+    public static func redacted(_ commandLine: String, hiding secret: String) -> String {
+        guard !secret.isEmpty, secret != "0" else { return commandLine }
+        return commandLine.replacingOccurrences(of: secret, with: "***")
     }
 
     /// `${var}` 变量替换；未知变量保留原样，便于排查。
