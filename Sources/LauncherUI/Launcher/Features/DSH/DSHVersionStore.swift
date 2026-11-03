@@ -37,10 +37,23 @@ public final class DSHVersionStore {
 
     // MARK: 派生
 
-    /// 当前选中的版本（未安装或未选择返回 nil）。
+    /// 当前选中的实例（未安装或未选择返回 nil）。
     public var selectedInstalledVersion: DSHInstalledVersion? {
-        installed.first { $0.version == settings.dshSelectedVersion }
+        installed.first { $0.id == settings.dshSelectedInstanceID }
     }
+
+    /// 同一 DSH 版本的实例（允许一个版本装多份，每份不同名字）。
+    public func instances(of dshVersion: String) -> [DSHInstalledVersion] {
+        installed.filter { $0.dshVersion == dshVersion }
+    }
+
+    /// 某个 DSH 版本是否已有至少一个实例。
+    public func hasInstance(of dshVersion: String) -> Bool {
+        installed.contains { $0.dshVersion == dshVersion }
+    }
+
+    /// 默认实例名。
+    public static func defaultName(for dshVersion: String) -> String { "DSH \(dshVersion)" }
 
     public var latestVersion: DSHVersionInfo? {
         catalog?.latest()
@@ -62,7 +75,7 @@ public final class DSHVersionStore {
 
     // MARK: 已安装版本
 
-    /// 重新扫描磁盘上的已安装版本。
+    /// 重新扫描磁盘上的已安装实例（含旧版本目录迁移）。
     public func refreshInstalled() {
         let fileManager = FileManager.default
         guard let entries = try? fileManager.contentsOfDirectory(
@@ -75,37 +88,83 @@ public final class DSHVersionStore {
         }
         var result: [DSHInstalledVersion] = []
         for directory in entries {
-            let version = directory.lastPathComponent
-            let script = paths.cliScript(for: version)
+            let directoryName = directory.lastPathComponent
+            guard DSHPaths.isSafeInstanceID(directoryName) else { continue }
+            let script = paths.cliScript(for: directoryName)
             guard fileManager.fileExists(atPath: script.path) else { continue }
-            let meta = readInstallMetadata(version: version)
-            let size = meta?.sizeBytes ?? paths.directorySize(directory)
-            result.append(
-                DSHInstalledVersion(
-                    version: version,
-                    installedAt: meta?.installedAt
-                        ?? (try? directory.resourceValues(forKeys: [.creationDateKey]).creationDate)
-                        ?? Date(),
+            if let metadata = readInstallMetadata(instanceID: directoryName) {
+                var instance = metadata
+                instance = DSHInstalledVersion(
+                    id: instance.id,
+                    name: instance.name.isEmpty ? Self.defaultName(for: instance.dshVersion) : instance.name,
+                    dshVersion: instance.dshVersion,
+                    installedAt: instance.installedAt,
                     path: directory.path,
-                    sizeBytes: size
+                    sizeBytes: instance.sizeBytes ?? paths.directorySize(directory),
+                    kind: instance.kind,
+                    packName: instance.packName,
+                    packVersion: instance.packVersion,
+                    legacy: instance.legacy
                 )
-            )
+                result.append(instance)
+            } else {
+                // 旧版布局：目录名就是 npm 版本号
+                let installedAt = (try? directory.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? Date()
+                result.append(
+                    DSHInstalledVersion(
+                        legacyVersion: directoryName,
+                        installedAt: installedAt,
+                        path: directory.path,
+                        sizeBytes: paths.directorySize(directory)
+                    )
+                )
+            }
         }
-        installed = result.sorted { DSHVersionComparator.isNewer($0.version, than: $1.version) }
-        if !settings.dshSelectedVersion.isEmpty,
-           !installed.contains(where: { $0.version == settings.dshSelectedVersion }) {
-            settings.dshSelectedVersion = installed.first?.version ?? ""
+        installed = result.sorted { lhs, rhs in
+            if lhs.dshVersion != rhs.dshVersion {
+                return DSHVersionComparator.isNewer(lhs.dshVersion, than: rhs.dshVersion)
+            }
+            return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
         }
-        if settings.dshSelectedVersion.isEmpty {
-            settings.dshSelectedVersion = installed.first?.version ?? ""
+        migrateLegacyDataIfNeeded()
+        migrateSelectionIfNeeded()
+    }
+
+    /// 旧的共享 DSH_HOME（`DSH/home`）迁移到某个旧实例独立 home，避免升级后插件/会话丢失。
+    private func migrateLegacyDataIfNeeded() {
+        let fileManager = FileManager.default
+        let legacyHome = paths.homeRoot
+        guard fileManager.fileExists(atPath: legacyHome.path),
+              let legacyInstance = installed.first(where: { $0.legacy }) else { return }
+        let target = paths.homeDirectory(for: legacyInstance.id)
+        guard !fileManager.fileExists(atPath: target.path) else { return }
+        do {
+            try fileManager.createDirectory(at: paths.homesDirectory, withIntermediateDirectories: true)
+            try fileManager.moveItem(at: legacyHome, to: target)
+        } catch {
+            // 迁移失败不阻塞启动：启动时会重新种子凭据
         }
     }
 
-    /// 选中某个已安装版本。
-    public func select(_ version: String) {
-        guard DSHPaths.isSafeVersion(version) else { return }
-        guard installed.contains(where: { $0.version == version }) else { return }
-        settings.dshSelectedVersion = version
+    private func migrateSelectionIfNeeded() {
+        if settings.dshSelectedInstanceID.isEmpty,
+           let legacySelected = installed.first(where: { $0.version == settings.dshSelectedVersion }) {
+            settings.dshSelectedInstanceID = legacySelected.id
+        }
+        if !settings.dshSelectedInstanceID.isEmpty,
+           !installed.contains(where: { $0.id == settings.dshSelectedInstanceID }) {
+            settings.dshSelectedInstanceID = installed.first?.id ?? ""
+        }
+        if settings.dshSelectedInstanceID.isEmpty {
+            settings.dshSelectedInstanceID = installed.first?.id ?? ""
+        }
+    }
+
+    /// 选中某个实例。
+    public func select(_ instanceID: String) {
+        guard DSHPaths.isSafeInstanceID(instanceID) else { return }
+        guard installed.contains(where: { $0.id == instanceID }) else { return }
+        settings.dshSelectedInstanceID = instanceID
     }
 
     // MARK: 版本目录
@@ -165,36 +224,52 @@ public final class DSHVersionStore {
 
     // MARK: 安装
 
-    /// 安装指定版本（下载 + 安装依赖 + 校验入口脚本）。
-    public func install(_ version: String) async {
-        guard DSHPaths.isSafeVersion(version) else {
-            installState = .failed(version: version, message: DSHError.invalidVersion(version).localizedDescription)
+    /// 安装指定 DSH 版本（可自定义实例名；同名 / 同版本都允许多开）。
+    ///
+    /// - Parameters:
+    ///   - dshVersion: npm 上的 `@deepseek-ai/dsh` 版本号。
+    ///   - name: 实例显示名；nil 时使用「DSH <版本号>」。
+    public func install(_ dshVersion: String, name: String? = nil) async {
+        guard DSHPaths.isSafeVersion(dshVersion) else {
+            installState = .failed(version: dshVersion, message: DSHError.invalidVersion(dshVersion).localizedDescription)
             return
         }
         guard !isInstalling else { return }
-        guard !installed.contains(where: { $0.version == version }) else {
-            installState = .failed(version: version, message: "该版本已经安装")
-            return
-        }
         guard let node = DSHExecutables.node() else {
-            installState = .failed(version: version, message: DSHError.nodeNotFound.localizedDescription)
+            installState = .failed(version: dshVersion, message: DSHError.nodeNotFound.localizedDescription)
             return
         }
         guard let manager = DSHExecutables.packageManager(paths: paths) else {
-            installState = .failed(version: version, message: DSHError.packageManagerNotFound.localizedDescription)
+            installState = .failed(version: dshVersion, message: DSHError.packageManagerNotFound.localizedDescription)
             return
         }
 
+        let instanceID = UUID().uuidString.lowercased()
+        let instanceName = Self.normalizedInstanceName(name, fallback: Self.defaultName(for: dshVersion))
         lastError = nil
         installLog = []
-        installState = .installing(version: version, phase: .preparing)
+        installState = .installing(version: dshVersion, phase: .preparing)
 
         let task = Task { [weak self] in
             guard let self else { return }
-            await self.performInstall(version: version, node: node, manager: manager)
+            await self.performInstall(
+                instanceID: instanceID,
+                dshVersion: dshVersion,
+                name: instanceName,
+                node: node,
+                manager: manager
+            )
         }
         installTask = task
         await task.value
+    }
+
+    /// 规范化实例名：去首尾空白、压缩连续空白、限制长度；空名回退默认名。
+    static func normalizedInstanceName(_ name: String?, fallback: String) -> String {
+        let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return fallback }
+        let collapsed = trimmed.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        return String(collapsed.prefix(60))
     }
 
     /// 取消正在进行的安装（终止子进程并清理半成品目录）。
@@ -203,16 +278,22 @@ public final class DSHVersionStore {
         installTask = nil
     }
 
-    private func performInstall(version: String, node: URL, manager: DSHPackageManager) async {
+    private func performInstall(
+        instanceID: String,
+        dshVersion: String,
+        name: String,
+        node: URL,
+        manager: DSHPackageManager
+    ) async {
         let fileManager = FileManager.default
-        let directory = paths.versionDirectory(version)
+        let directory = paths.versionDirectory(instanceID)
         do {
             try paths.ensureDirectories()
             try? fileManager.removeItem(at: directory)
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
             let manifest = """
             {
-              "name": "dsh-version-\(version)",
+              "name": "dsh-instance-\(instanceID)",
               "private": true
             }
             """
@@ -233,10 +314,10 @@ public final class DSHVersionStore {
                     lineCount += 1
                     if self.installLog.count < 400 { self.installLog.append(line) }
                     if case .installing(let currentVersion, let phase) = self.installState,
-                       currentVersion == version {
+                       currentVersion == dshVersion {
                         let next: DSHInstallPhase = lineCount < 4 ? .downloading : .installing
                         if phase != next {
-                            self.installState = .installing(version: version, phase: next)
+                            self.installState = .installing(version: dshVersion, phase: next)
                         }
                     }
                 }
@@ -249,7 +330,7 @@ public final class DSHVersionStore {
                 result = try await DSHCommandRunner.run(
                     executable: node,
                     arguments: [
-                        npmCLI.path, "install", "@deepseek-ai/dsh@\(version)",
+                        npmCLI.path, "install", "@deepseek-ai/dsh@\(dshVersion)",
                         "--omit=dev", "--no-audit", "--no-fund", "--no-progress"
                     ],
                     environment: environment,
@@ -260,7 +341,7 @@ public final class DSHVersionStore {
                 result = try await DSHCommandRunner.run(
                     executable: manager.executable,
                     arguments: [
-                        "install", "@deepseek-ai/dsh@\(version)",
+                        "install", "@deepseek-ai/dsh@\(dshVersion)",
                         "--omit=dev", "--no-audit", "--no-fund", "--no-progress"
                     ],
                     environment: environment,
@@ -271,7 +352,7 @@ public final class DSHVersionStore {
                 // 只有 pnpm 可用：先普通安装；若因构建脚本被忽略而失败，解析被忽略的包名后带 --allow-build 重试。
                 result = try await DSHCommandRunner.run(
                     executable: manager.executable,
-                    arguments: ["add", "@deepseek-ai/dsh@\(version)", "--reporter=append-only", "--config.strictDepBuilds=false"],
+                    arguments: ["add", "@deepseek-ai/dsh@\(dshVersion)", "--reporter=append-only", "--config.strictDepBuilds=false"],
                     environment: environment,
                     workingDirectory: directory,
                     onLine: lineHandler
@@ -280,7 +361,7 @@ public final class DSHVersionStore {
                     let ignored = Self.ignoredBuildPackages(in: result.output)
                     if !ignored.isEmpty {
                         appendInstallLog("pnpm 默认阻止了构建脚本，允许 \(ignored.joined(separator: ", ")) 后重试")
-                        var arguments = ["add", "@deepseek-ai/dsh@\(version)", "--reporter=append-only"]
+                        var arguments = ["add", "@deepseek-ai/dsh@\(dshVersion)", "--reporter=append-only"]
                         for package in ignored {
                             arguments.append("--allow-build")
                             arguments.append(package)
@@ -301,15 +382,21 @@ public final class DSHVersionStore {
                 let tail = result.output.split(separator: "\n").suffix(8).joined(separator: "\n")
                 throw DSHError.installFailed(tail.isEmpty ? "包管理器退出码 \(result.exitCode)" : tail)
             }
-            guard fileManager.fileExists(atPath: paths.cliScript(for: version).path) else {
+            guard fileManager.fileExists(atPath: paths.cliScript(for: instanceID).path) else {
                 throw DSHError.installFailed("安装完成后没有找到 @deepseek-ai/dsh 入口脚本")
             }
 
-            installState = .installing(version: version, phase: .finishing)
+            installState = .installing(version: dshVersion, phase: .finishing)
             let size = paths.directorySize(directory)
-            writeInstallMetadata(version: version, size: size)
+            writeInstallMetadata(
+                instanceID: instanceID,
+                dshVersion: dshVersion,
+                name: name,
+                size: size,
+                kind: .vanilla
+            )
             refreshInstalled()
-            settings.dshSelectedVersion = version
+            settings.dshSelectedInstanceID = instanceID
             installState = .idle
             installTask = nil
         } catch is CancellationError {
@@ -320,31 +407,53 @@ public final class DSHVersionStore {
         } catch {
             try? fileManager.removeItem(at: directory)
             let message = (error as? DSHError)?.localizedDescription ?? error.localizedDescription
-            installState = .failed(version: version, message: message)
+            installState = .failed(version: dshVersion, message: message)
             lastError = error as? DSHError
             installTask = nil
         }
     }
 
-    /// 卸载版本（只删除该版本的 node_modules 与日志；共享的 DSH_HOME 不动）。
+    /// 卸载实例（只删除该实例的 node_modules、独立 DSH_HOME 与日志）。
     @discardableResult
-    public func uninstall(_ version: String) -> Bool {
-        guard DSHPaths.isSafeVersion(version) else { return false }
+    public func uninstall(_ instanceID: String) -> Bool {
+        guard DSHPaths.isSafeInstanceID(instanceID) else { return false }
         guard !isInstalling else { return false }
         let fileManager = FileManager.default
         do {
-            try fileManager.removeItem(at: paths.versionDirectory(version))
-            try? fileManager.removeItem(at: paths.isolatedHomeDirectory(for: version))
-            try? fileManager.removeItem(at: paths.logFile(for: version))
+            try fileManager.removeItem(at: paths.versionDirectory(instanceID))
+            try? fileManager.removeItem(at: paths.homeDirectory(for: instanceID))
+            try? fileManager.removeItem(at: paths.logFile(for: instanceID))
             refreshInstalled()
-            if settings.dshSelectedVersion == version {
-                settings.dshSelectedVersion = installed.first?.version ?? ""
+            if settings.dshSelectedInstanceID == instanceID {
+                settings.dshSelectedInstanceID = installed.first?.id ?? ""
             }
             return true
         } catch {
             lastError = DSHError.installFailed("卸载失败：\(error.localizedDescription)")
             return false
         }
+    }
+
+    /// 创建一个「从整合包导入」的实例元数据（运行时由整合包服务写入后调用）。
+    public func adoptImportedInstance(
+        instanceID: String,
+        name: String,
+        dshVersion: String,
+        size: Int64,
+        packName: String,
+        packVersion: String?
+    ) {
+        writeInstallMetadata(
+            instanceID: instanceID,
+            dshVersion: dshVersion,
+            name: name,
+            size: size,
+            kind: .pack,
+            packName: packName,
+            packVersion: packVersion
+        )
+        refreshInstalled()
+        settings.dshSelectedInstanceID = instanceID
     }
 
     // MARK: 测试入口
@@ -387,24 +496,37 @@ public final class DSHVersionStore {
 
     // MARK: 安装元数据
 
-    private struct InstallMetadata: Codable {
-        let version: String
-        let installedAt: Date
-        let sizeBytes: Int64?
+    private func metadataURL(_ instanceID: String) -> URL {
+        paths.versionDirectory(instanceID).appendingPathComponent("launcher-install.json")
     }
 
-    private func metadataURL(_ version: String) -> URL {
-        paths.versionDirectory(version).appendingPathComponent("launcher-install.json")
+    private func readInstallMetadata(instanceID: String) -> DSHInstalledVersion? {
+        guard let data = try? Data(contentsOf: metadataURL(instanceID)) else { return nil }
+        return try? JSONDecoder().decode(DSHInstalledVersion.self, from: data)
     }
 
-    private func readInstallMetadata(version: String) -> InstallMetadata? {
-        guard let data = try? Data(contentsOf: metadataURL(version)) else { return nil }
-        return try? JSONDecoder().decode(InstallMetadata.self, from: data)
-    }
-
-    private func writeInstallMetadata(version: String, size: Int64) {
-        let metadata = InstallMetadata(version: version, installedAt: Date(), sizeBytes: size)
+    private func writeInstallMetadata(
+        instanceID: String,
+        dshVersion: String,
+        name: String,
+        size: Int64,
+        kind: DSHInstanceKind,
+        packName: String? = nil,
+        packVersion: String? = nil
+    ) {
+        let metadata = DSHInstalledVersion(
+            id: instanceID,
+            name: name,
+            dshVersion: dshVersion,
+            installedAt: Date(),
+            path: paths.versionDirectory(instanceID).path,
+            sizeBytes: size,
+            kind: kind,
+            packName: packName,
+            packVersion: packVersion,
+            legacy: false
+        )
         guard let data = try? JSONEncoder().encode(metadata) else { return }
-        try? data.write(to: metadataURL(version), options: .atomic)
+        try? data.write(to: metadataURL(instanceID), options: .atomic)
     }
 }

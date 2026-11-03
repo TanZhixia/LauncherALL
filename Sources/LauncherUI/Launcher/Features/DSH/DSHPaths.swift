@@ -44,19 +44,25 @@ public struct DSHPaths: Sendable {
 
     /// 首次启动时把系统 DSH 的登录凭据软链进 launcher 的 DSH_HOME：
     /// 复用 `~/.dsh/.credentials.yaml`（DEEPSEEK_API_KEY 等 refs），避免 Web UI 要求重新输入密钥。
-    public func seedSharedHomeIfNeeded() {
+    /// 给实例 home 软链用户已有 DSH 的登录凭据（不复制密钥）。
+    public func seedHomeIfNeeded(_ home: URL) {
         let fileManager = FileManager.default
         let userHome = userDSHHome
-        guard homeRoot.resolvingSymlinksInPath() != userHome.resolvingSymlinksInPath() else { return }
-        try? fileManager.createDirectory(at: homeRoot, withIntermediateDirectories: true)
+        guard home.resolvingSymlinksInPath() != userHome.resolvingSymlinksInPath() else { return }
+        try? fileManager.createDirectory(at: home, withIntermediateDirectories: true)
         let names = [".credentials.yaml", ".anonymous-user-id", "settings.yaml"]
         for name in names {
             let source = userHome.appendingPathComponent(name)
-            let destination = homeRoot.appendingPathComponent(name)
+            let destination = home.appendingPathComponent(name)
             guard fileManager.fileExists(atPath: source.path),
                   !fileManager.fileExists(atPath: destination.path) else { continue }
             try? fileManager.createSymbolicLink(at: destination, withDestinationURL: source)
         }
+    }
+
+    /// 兼容旧调用：给旧的共享 home 种子凭据。
+    public func seedSharedHomeIfNeeded() {
+        seedHomeIfNeeded(homeRoot)
     }
 
     public var versionsDirectory: URL { root.appendingPathComponent("versions", isDirectory: true) }
@@ -71,14 +77,23 @@ public struct DSHPaths: Sendable {
         return version.range(of: #"^[0-9A-Za-z][0-9A-Za-z.+-]*$"#, options: .regularExpression) != nil
     }
 
-    public func versionDirectory(_ version: String) -> URL {
-        versionsDirectory.appendingPathComponent(version, isDirectory: true)
+    /// 实例 ID 是否安全（UUID / 旧版本号 / 导入时生成的 slug）。
+    public static func isSafeInstanceID(_ id: String) -> Bool {
+        guard !id.isEmpty, id.count <= 96 else { return false }
+        return id.range(of: #"^[0-9A-Za-z][0-9A-Za-z._-]*$"#, options: .regularExpression) != nil
     }
 
-    /// 所有版本共享的 DSH_HOME（与用户已有的 DSH / dsh CLI 一致）。
-    public func homeDirectory(for version: String) -> URL {
-        _ = version
-        return homeRoot
+    /// 实例目录（一个 DSH 版本可以安装多次，目录按实例 ID 区分）。
+    public func versionDirectory(_ instanceID: String) -> URL {
+        versionsDirectory.appendingPathComponent(instanceID, isDirectory: true)
+    }
+
+    /// 别名：语义更明确。
+    public func instanceDirectory(_ instanceID: String) -> URL { versionDirectory(instanceID) }
+
+    /// 实例自己的 DSH_HOME（每个实例隔离插件 / 会话；凭据从 ~/.dsh 软链复用）。
+    public func homeDirectory(for instanceID: String) -> URL {
+        homesDirectory.appendingPathComponent(instanceID, isDirectory: true)
     }
 
     /// 旧的「每个版本独立 DSH_HOME」目录（仅用于清理历史数据）。
@@ -90,13 +105,13 @@ public struct DSHPaths: Sendable {
         logsDirectory.appendingPathComponent("\(version).log")
     }
 
-    public func profileDirectory(for version: String) -> URL {
-        homeDirectory(for: version).appendingPathComponent("profiles/web", isDirectory: true)
+    public func profileDirectory(for instanceID: String) -> URL {
+        homeDirectory(for: instanceID).appendingPathComponent("profiles/web", isDirectory: true)
     }
 
-    /// 版本入口脚本（npm 安装后的 `@deepseek-ai/dsh/lib/bin.js`）。
-    public func cliScript(for version: String) -> URL {
-        versionDirectory(version)
+    /// 实例入口脚本（npm 安装后的 `@deepseek-ai/dsh/lib/bin.js`）。
+    public func cliScript(for instanceID: String) -> URL {
+        versionDirectory(instanceID)
             .appendingPathComponent("node_modules/@deepseek-ai/dsh/lib/bin.js")
     }
 

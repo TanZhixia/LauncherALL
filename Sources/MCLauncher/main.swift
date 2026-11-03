@@ -11,14 +11,18 @@ struct MCLauncherApp: App {
     @State private var dshVersions: DSHVersionStore
     @State private var dshProcess: DSHProcessController
     @State private var dshPlugins: DSHPluginStore
+    @State private var dshPacks: DSHPackService
 
     init() {
         let store = AccountStore()
         _accountStore = State(initialValue: store)
         _engine = State(initialValue: LauncherEngine(accountStore: store))
-        _dshVersions = State(initialValue: DSHVersionStore())
+        let versions = DSHVersionStore()
+        let plugins = DSHPluginStore()
+        _dshVersions = State(initialValue: versions)
         _dshProcess = State(initialValue: DSHProcessController())
-        _dshPlugins = State(initialValue: DSHPluginStore())
+        _dshPlugins = State(initialValue: plugins)
+        _dshPacks = State(initialValue: DSHPackService(versions: versions, plugins: plugins))
     }
 
     var body: some Scene {
@@ -29,6 +33,7 @@ struct MCLauncherApp: App {
                 .environment(dshVersions)
                 .environment(dshProcess)
                 .environment(dshPlugins)
+                .environment(dshPacks)
                 .launcherThemeEnvironment(themeManager)
                 .frame(minWidth: 1080, minHeight: 720)
                 .background { LauncherWindowConfigurator() }
@@ -63,6 +68,21 @@ func runMain(arguments: [String]) async -> Int32 {
     if let index = arguments.firstIndex(of: "--export-xml-snapshots") {
         let output = index + 1 < arguments.count ? arguments[index + 1] : "Snapshots/XML"
         return XMLTool.exportSnapshots(directory: output)
+    }
+    if let index = arguments.firstIndex(of: "--dsh-install") {
+        return await LauncherCLI.dshInstall(arguments: arguments, startIndex: index + 1)
+    }
+    if let index = arguments.firstIndex(of: "--dsh-pack-export") {
+        return await LauncherCLI.dshPackExport(arguments: arguments, startIndex: index + 1)
+    }
+    if let index = arguments.firstIndex(of: "--dsh-pack-import") {
+        return await LauncherCLI.dshPackImport(arguments: arguments, startIndex: index + 1)
+    }
+    if let index = arguments.firstIndex(of: "--dsh-remove") {
+        return LauncherCLI.dshRemove(arguments: arguments, startIndex: index + 1)
+    }
+    if let index = arguments.firstIndex(of: "--dsh-pack-inspect") {
+        return LauncherCLI.dshPackInspect(arguments: arguments, startIndex: index + 1)
     }
     if arguments.contains("--dsh-check") {
         return await LauncherCLI.dshCheck()

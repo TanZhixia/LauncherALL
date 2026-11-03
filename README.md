@@ -3,7 +3,7 @@
 **LauncherALL** 是一个启动器集合：标题栏的品牌下拉菜单可在 **Minecraft 启动器** 与 **DSH 启动器** 之间切换，两者共用同一个壳、主题与窗口、相同的四个导航页。
 
 - **Minecraft 启动器**：版本清单 / 安装 / Java 检测 / 正版登录 / 启动 / 日志 / 实例工具全部真实实现。
-- **DSH 启动器**：管理官方 `@deepseek-ai/dsh` 的 **Web UI 版本**（从 npm 下载安装、多版本共存），一键启动 `dsh --profile web` 并在浏览器打开；「社区资源」换成 **DSH 插件市场**，加载源直接使用 dshmarket 的数据源（`awesome-dsh-plugin.com/plugins.json`，8000+ 插件），安装走官方 `dsh plugin --profile web add`。
+- **DSH 启动器**：管理官方 `@deepseek-ai/dsh` 的 **Web UI 实例**（从 npm 下载安装、同名/同版本可多开，每个实例独立名字与 `DSH_HOME`），一键启动 `dsh --profile web` 并在浏览器打开；「社区资源」换成 **DSH 插件市场**（加载源直接使用 dshmarket 的 `awesome-dsh-plugin.com/plugins.json`，8000+ 插件）；新增私有 **`.dshpack` 整合包**：把 DSH 本体 + 插件打成离线包，导入即成新实例。
 
 用 **Swift 6 / SwiftUI** 写的 macOS Minecraft 启动器：**顶部导航（启动 / 下载 / 设置 / 更多）** + 极简平面化设计系统（一深一浅两套主题）+ 30 多个控件 + XML 声明式 UI 层。
 
@@ -34,7 +34,7 @@ swift run MCLauncher --export-app-snapshots Snapshots/App
 swift run MCLauncher --export-snapshots Snapshots
 python3 tools/make_contact_sheet.py   # 需要 Pillow，生成对比图
 
-# 测试（215 个用例，全部离线）
+# 测试（266 个用例，全部离线）
 swift test
 ```
 
@@ -46,6 +46,12 @@ swift test
 | **下载** | Mojang 版本库 + 安装队列 / 安装选项 / 下载源 / 磁盘占用 / 社区资源（Modrinth） |
 | **设置** | 启动 / Java / 性能 / 更新与语言 / 外观 / 账户（离线 + 正版登录）/ 关于 / 日志与诊断 |
 | **更多** | 日志 / 实例备份 / 模组管理 / 截图相册 / 社区外链 / 快捷键 / 关于 / 快捷操作 |
+
+### DSH 实例与整合包（`.dshpack`）
+
+- **实例**：每次安装 DSH 都可以自定义名字（默认 `DSH <版本>`），同一个 npm 版本可以装多份；每个实例有独立的 `DSH_HOME`（插件 / 会话 / profile 互相隔离），登录凭据仍复用 `~/.dsh`，不会要求重新输入密钥。
+- **整合包**：LauncherALL 私有格式 `.dshpack`（zip：`manifest.json` + 可选 DSH 本体 + 可选插件 tarball）。在「DSH → 下载 → 整合包」里导入 / 导出；启动页实例菜单也可以直接「导出为整合包」。导出可选「完整包（含 DSH 本体，离线可用，几百 MB）」或「轻量包（只记录版本，导入时从 npm 安装）」。
+- 导入时自动创建新实例（可再自定义名字），插件装进该实例独立的 profile；导入失败 / 取消会自动回滚，不会留下半成品实例。
 
 四个一级页面采用 PCL-CE 式「左面板 + 右内容」布局（布局参考 PCL2 社区版源码，控件与视觉全部用本项目 LauncherUI 实现，见 [docs/PCL-CE-REFACTOR.md](docs/PCL-CE-REFACTOR.md)）。设置页内部还有竖排分类导航；**最小窗口 1080×720 下各分区无需纵向滚动**。
 
@@ -77,10 +83,10 @@ swift test
 | 设置 | Java 运行时 | 真实扫描 JDK + 手动路径探针（存在 / 可执行 / `java -version` 可解析）+ 自动选择 |
 | 设置 | 性能 | 内存上限按物理内存计算、`-Xmx` 冲突提示、JVM 参数真实计数、渲染线程 |
 | 设置 | 更新与语言 | 真实 HTTP 检查更新（可配置更新源，未配置时明确"未配置"）；旧版本清理真实删除；语言三语（见边界） |
-| DSH | 启动 | 已安装 DSH 版本列表（搜索 / 刷新 / 选择）、启动 / 停止 Web UI、端口与运行状态、实时日志、快捷打开 / 复制启动地址、环境与插件入口 |
-| DSH | 下载 | 「DSH 版本」：npm 上 40 个 `@deepseek-ai/dsh` 版本的真实列表、安装 / 卸载、安装阶段与日志、取消；「插件市场」：搜索 / 分类 / 排序 8000+ 插件、安装 / 卸载、已安装列表、加载源状态 |
-| DSH | 设置 | Web UI 端口 / 自动打开浏览器 / 默认版本、npm registry、插件加载源（dshmarket 源）、缓存与数据目录、Node/pnpm 环境、危险区清理 |
-| DSH | 更多 | 运行日志（token 脱敏）、数据目录（versions / DSH_HOME / cache / bin）、进程状态与打开 / 复制 / 停止、关于与快捷键 |
+| DSH | 启动 | DSH 实例列表（自定义名字 / 版本 / 整合包徽标，搜索 / 刷新 / 选择）、启动 / 停止 Web UI、端口与运行状态、实时日志、每实例 DSH_HOME、插件入口、导出整合包 |
+| DSH | 下载 | 「DSH 版本」：npm 上 40 个 `@deepseek-ai/dsh` 版本的真实列表，安装时自定义实例名、同版本可重复安装，安装阶段 / 日志 / 取消，卸载确认；「插件市场」：按实例搜索 / 分类 / 排序 8000+ 插件、安装 / 卸载、已安装列表、加载源状态；「整合包」：导入 / 导出 `.dshpack`（完整包 / 轻量包）、本地整合包列表 |
+| DSH | 设置 | Web UI 端口 / 自动打开浏览器 / 默认实例、npm registry、插件加载源（dshmarket 源）、缓存与数据目录、Node/pnpm 环境、每实例 DSH_HOME、危险区清理（删除所有实例数据） |
+| DSH | 更多 | 运行日志（token 脱敏）、数据目录（versions / homes / cache / bin）、进程状态与打开 / 复制 / 停止、关于与快捷键 |
 | 设置 | 账户（正版） | 微软设备码登录：大字验证码 + 复制 / 打开浏览器 + 倒计时 + 内联失败重试；多账户切换 / 刷新令牌 / 退出登录；启动时按选中账户使用正版身份 |
 | 设置 | 账户（离线） | 玩家名校验（非法不写回）、已保存名切换 / 删除、离线 UUID 复制 |
 | 设置 | 关于 / 日志 / 保存条 | 真实版本 / 构建号 / 构建时间 / git 提交；日志复制 / 导出 / 跳转；显示真实 `lastSavedAt`；恢复默认需确认 |
@@ -119,7 +125,7 @@ Sources/
     Shell/                    # 画廊侧栏外壳
     XML/                      # XML UI 引擎（解析 / 状态 / 动作 / 渲染）
   MCLauncher/                 # 可执行 App 入口 + 各截图导出器 + CLI 工具
-Tests/LauncherUITests/        # 215 个用例：后端 / XML / 四页交互 / 共享交互层 / 正版登录 / 产品切换 / DSH
+Tests/LauncherUITests/        # 266 个用例：后端 / XML / 四页交互 / 共享交互层 / 正版登录 / 产品切换 / DSH
 docs/
   BACKEND.md                  # 真实后端与安装/启动链路
   APP-UI.md                   # 四页交互契约（控件 → 真实行为）
@@ -143,7 +149,11 @@ tools/make_contact_sheet.py   # 生成主题对比图（Pillow）
 ```bash
 swift run MCLauncher --detect-java
 swift run MCLauncher --auth-check                          # 验证正版登录端点可用（只申请设备码，不轮询）
-swift run MCLauncher --dsh-check                            # 检查 DSH 环境/已安装版本，真实启动一次 Web UI 后停止
+swift run MCLauncher --dsh-check                            # 检查 DSH 环境/实例，真实启动一次 Web UI 后停止
+swift run MCLauncher --dsh-install 0.2.1-rc.5 "工作版"      # 安装 DSH 实例（可自定义名字，同版本可多开）
+swift run MCLauncher --dsh-pack-export 工作版 ~/工作版.dshpack  # 导出整合包（--runtime online 可导出轻量包）
+swift run MCLauncher --dsh-pack-import ~/工作版.dshpack "副本"   # 导入整合包为独立实例
+swift run MCLauncher --dsh-pack-inspect ~/工作版.dshpack         # 查看整合包 manifest
 swift run MCLauncher --list-installed
 swift run MCLauncher --launch-dry-run 1.21.11-Fabric    # 只打印最终命令，不启动
 swift run MCLauncher --launch 26.3-Fabric --timeout 12  # 真实启动并收集日志
@@ -176,7 +186,7 @@ swift run MCLauncher --export-xml-snapshots Snapshots/XML
 
 ## 测试与验证
 
-- `swift test`：**215 个用例**，全部离线（网络层用 `URLProtocol` stub / 认证服务注入替身）。
+- `swift test`：**266 个用例**，全部离线（网络层用 `URLProtocol` stub / 认证服务注入替身）。
   - `LauncherBackendTests`（12）：规则求值、离线 UUID、参数替换、版本 JSON 兼容、版本扫描、命令构建
   - `AuthFeatureTests`（21）：设备码 / 刷新令牌 / XBL / XSTS / Minecraft 登录请求构造、响应解码、XSTS 错误码映射、会话刷新窗口、启动身份、登录状态机（成功 / 失败 / 取消 / 退出 / 令牌刷新）、正版启动参数注入与令牌脱敏
   - `XMLUITests`（16）：XML 解析 / 诊断 / 状态 / 插值 / 内置动作 / 渲染分发
@@ -184,11 +194,13 @@ swift run MCLauncher --export-xml-snapshots Snapshots/XML
   - `DownloadFeatureTests`（35）：Modrinth URL/解码、安装路径决策、`.mrpack` 解析与缺下载地址、zip-slip 条目校验、loader 兼容判断、离线安装流程
   - `SettingsFeatureTests`（30）：内存方案、JVM 冲突、Java 探针、清理规划、日志导出（与更多页同落点）、三语文案完整性与文案真实性
   - `MoreFeatureTests`（18）：真实临时目录下的 ditto 备份/恢复、模组启停、截图缩略图、日志导出、备份暂存清理
+  - `DSHBackendTests`：DSH 版本 semver 比较、npm 版本目录解码、插件加载源解析与安装标识、实例目录 / 每实例 home、安装扫描 / 卸载 / 迁移、已安装插件读取、端口、命令执行、pnpm shim、token 脱敏
+  - `DSHPackTests`（27）：`.dshpack` manifest 编解码、bundled 导出 / 导入、online 导出、离线插件载荷持久化/再导出、导入失败与取消回滚、online guard、symlink 拒绝、原子导出、非法包与路径校验、同版本多实例
+  - `DSHDownloadUITests`（27）：实例命名安装 / 同版本多实例、整合包导入导出与进度/门禁、插件格式化与分区排序、dist-tag、深链、快照三分类渲染
+  - `DSHLaunchUITests`（14）：实例列表 / 运行态按实例 ID、整合包徽标与导出菜单、日志/状态/脱敏、两主题离屏渲染
+  - `DSHSettingsUITests`（20）：实例化设置、每实例 DSH_HOME、统计与删除数据、快照安全、校验/格式化
+  - `DSHMoreUITests`（3）：实例日志映射、同版本多实例、四分区两主题离屏渲染
   - `ProductSwitcherTests`（4）：LauncherALL 产品元数据、Minecraft/DSH 切换、跨产品切页、DSH 启动页两主题离屏渲染
-  - `DSHBackendTests`（17）：DSH 版本 semver 比较、npm 版本目录解码、插件加载源解析与安装标识、目录布局、安装扫描 / 卸载、已安装插件读取、端口、命令执行、pnpm shim、共享 DSH_HOME 与 token 脱敏
-  - `DSHDownloadUITests`（14）：版本/插件格式化、分区排序、dist-tag、跨页动作映射等
-  - `DSHLaunchUITests`（12）：启动页状态文案、URL 脱敏、版本过滤、启动禁用原因、两主题离屏渲染
-  - `DSHSettingsUITests`（16）：设置分区/校验/格式化、环境检测快照、目录统计、缓存与危险区保护、日志尾部、插件源 fallback
 - `swift run MCLauncher --export-app-snapshots …`：**32 张**（2 主题 × 2 启动器 × 4 页 × 2 尺寸）全量渲染验收。
 - 启动页实机验证：`--launch` 可加载 Fabric Loader 与玩家模组（见 [docs/BACKEND.md](docs/BACKEND.md)）。
 
@@ -199,7 +211,8 @@ swift run MCLauncher --export-xml-snapshots Snapshots/XML
 - 正版头像（顶栏账户胶囊 / 设置账户行 / 登录成功）使用 crafatar 作为展示兜底（官方 textures 接口需要额外解析），仅影响界面展示，不影响启动身份；暂未做皮肤管理 / 披风切换。
 - 未接入 401 自动重试、多设备登录管理与企业租户（仅个人微软账户）。
 - DSH 启动器管理的是官方 `@deepseek-ai/dsh` 的 **Web UI 版本**：每个版本 ~850 MB（含依赖），安装需要 Node 20+ 与 pnpm/npm（优先系统 Node，其次 DSH 桌面端自带运行时）；启动后 Web UI 在默认浏览器打开，不内嵌到启动器。
-- DSH 的 `DSH_HOME` 固定在 `~/Library/Application Support/BlockLauncher/DSH/home`（所有版本共享），首次启动会把 `~/.dsh/.credentials.yaml` 等凭据软链进来复用登录 / API Key；插件、会话与系统 DSH 的 web profile 分开管理。
+- DSH 的每个实例有独立 `DSH_HOME`（`~/Library/Application Support/BlockLauncher/DSH/homes/<实例 UUID>`），首次启动会把 `~/.dsh/.credentials.yaml` 等凭据软链进来复用登录 / API Key；插件、会话与系统 DSH 的 web profile 分开，旧版共享 home 会自动迁移。
+- `.dshpack` 是 LauncherALL 私有格式（不是 dsh 官方格式）：`bundled` 包含 DSH 本体（压缩后几百 MB，离线可用），`online` 只记录版本号（导入时需要网络）；插件可附带 npm tarball 离线载荷，没有载荷的插件会在线安装。
 - 插件安装需要 pnpm：优先系统 pnpm，否则用 DSH 桌面端自带的 pnpm 生成 shim；没有 Node/pnpm 时 UI 会给出明确提示而不是假装成功。
 - 仅 macOS（osx / arm64、x86_64）规则；Windows / Linux 需要补规则与路径。
 - 整合包只支持 Fabric / Quilt / 原版；Forge / NeoForge 整合包会给出明确错误，不做假成功。加载器元数据直连 Fabric/Quilt 官方域，不走 BMCLAPI 镜像。

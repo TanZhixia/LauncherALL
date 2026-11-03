@@ -54,10 +54,13 @@ final class ProductSwitcherTests: XCTestCase {
             let manager = LauncherThemeManager(presets: LauncherThemes.all, defaults: defaults)
             manager.themeID = theme.id
 
+            let versions = DSHVersionStore(settings: settings, paths: paths)
+            let plugins = DSHPluginStore(settings: settings, paths: paths)
             let view = DSHLaunchPage()
-                .environment(DSHVersionStore(settings: settings, paths: paths))
+                .environment(versions)
                 .environment(DSHProcessController(settings: settings, paths: paths))
-                .environment(DSHPluginStore(settings: settings, paths: paths))
+                .environment(plugins)
+                .environment(DSHPackService(paths: paths, versions: versions, plugins: plugins, settings: settings))
                 .environment(LauncherRouter())
                 .launcherThemeEnvironment(manager)
                 .environment(\.launcherSnapshotMode, true)

@@ -50,7 +50,7 @@ enum DSHLaunchEnvironmentCache {
 
 // MARK: - 启动页展示逻辑
 
-/// DSH 启动页的纯展示逻辑：状态文案、URL token 脱敏、版本过滤、启动禁用原因、日志截取。
+/// DSH 启动页的纯展示逻辑：状态文案、URL token 脱敏、实例过滤、整包导出命名、启动 / 卸载禁用原因、日志截取。
 /// 拆成纯函数便于单元测试，不依赖进程 / 网络 / 渲染。
 enum DSHLaunchPresentation {
 
@@ -143,30 +143,7 @@ enum DSHLaunchPresentation {
         return "启动于 \(formatter.string(from: date))"
     }
 
-    // MARK: 版本列表
-
-    /// 搜索过滤已安装版本（按版本号忽略大小写）。
-    static func filteredVersions(_ versions: [DSHInstalledVersion], query: String) -> [DSHInstalledVersion] {
-        let keyword = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !keyword.isEmpty else { return versions }
-        return versions.filter { $0.version.localizedCaseInsensitiveContains(keyword) }
-    }
-
-    /// 是否为最新版本（与 npm `latest` dist-tag 对比）。
-    static func isLatest(_ version: DSHInstalledVersion, latestVersion: String?) -> Bool {
-        guard let latestVersion, !latestVersion.isEmpty else { return false }
-        return version.version == latestVersion
-    }
-
-    /// 安装日期文案，例如 "2026-11-02 20:10"（用于详情/提示）。
-    static func installedDateText(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_Hans_CN")
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return formatter.string(from: date)
-    }
-
-    /// 版本行里的紧凑安装时间，例如 "11-02 20:10"（300pt 侧栏放得下完整时间 + 体积）。
+    /// 安装时间（紧凑），例如 "11-03 21:10"。
     static func compactInstalledDateText(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_Hans_CN")
@@ -180,9 +157,117 @@ enum DSHLaunchPresentation {
         return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
-    /// 版本行副标题："11-02 20:10 · 123 MB"（紧凑格式，保证带 latest 徽标时也不被截断）。
-    static func versionSubtitle(_ version: DSHInstalledVersion) -> String {
-        "\(compactInstalledDateText(version.installedAt)) · \(sizeText(version.sizeBytes))"
+    // MARK: 实例列表
+
+    /// 搜索过滤实例（匹配实例名 + DSH 版本号）。
+    static func filteredInstances(_ instances: [DSHInstalledVersion], query: String) -> [DSHInstalledVersion] {
+        let keyword = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !keyword.isEmpty else { return instances }
+        return instances.filter {
+            $0.name.localizedCaseInsensitiveContains(keyword)
+                || $0.dshVersion.localizedCaseInsensitiveContains(keyword)
+                || $0.id.localizedCaseInsensitiveContains(keyword)
+        }
+    }
+
+    /// 左侧实例行副标题："DSH <dshVersion>"（任务约定格式）。
+    static func listSubtitle(_ instance: DSHInstalledVersion) -> String {
+        "DSH \(instance.dshVersion)"
+    }
+
+    /// 右侧当前实例卡副标题：DSH 版本 + 安装时间 + 体积。
+    static func detailSubtitle(_ instance: DSHInstalledVersion) -> String {
+        "DSH \(instance.dshVersion) · 安装 \(compactInstalledDateText(instance.installedAt)) · \(sizeText(instance.sizeBytes))"
+    }
+
+    /// 实例是否就是当前运行中的实例（按实例 ID 匹配，不比较版本号）。
+    static func isRunning(_ instance: DSHInstalledVersion, activeInstanceID: String?) -> Bool {
+        guard let activeInstanceID, !activeInstanceID.isEmpty else { return false }
+        return instance.id == activeInstanceID
+    }
+
+    /// 正在运行的实例（按 ID 从已安装实例里找；找不到时返回 nil）。
+    static func runningInstance(in instances: [DSHInstalledVersion], activeInstanceID: String?) -> DSHInstalledVersion? {
+        guard let activeInstanceID, !activeInstanceID.isEmpty else { return nil }
+        return instances.first { $0.id == activeInstanceID }
+    }
+
+    /// 实例行徽标：运行中 > 整合包；其余为 nil（latest 不再用于实例列表）。
+    static func instanceBadge(_ instance: DSHInstalledVersion, isRunning: Bool) -> String? {
+        if isRunning { return "运行中" }
+        if instance.isPack { return "整合包" }
+        return nil
+    }
+
+    /// 整合包来源信息行；非整合包返回 nil。
+    static func packInfoText(_ instance: DSHInstalledVersion) -> String? {
+        guard instance.isPack else { return nil }
+        let name = instance.packName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "未知整合包"
+        let version = instance.packVersion?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return version.isEmpty ? "整合包：\(name)" : "整合包：\(name) \(version)"
+    }
+
+    /// 是否为 npm 上 latest 版本（仅用于当前实例卡的小徽标）。
+    static func isLatest(_ instance: DSHInstalledVersion, latestVersion: String?) -> Bool {
+        guard let latestVersion, !latestVersion.isEmpty else { return false }
+        return instance.dshVersion == latestVersion
+    }
+
+    // MARK: 导出整合包
+
+    /// 导出模式菜单标题（菜单里直接给出完整包 / 轻量包两个入口）。
+    static func exportMenuTitle(runtime: DSHPackRuntimeMode) -> String {
+        switch runtime {
+        case .bundled: return "导出为整合包…（完整包，含 DSH 本体）"
+        case .online: return "导出为整合包…（轻量包，导入时联网）"
+        }
+    }
+
+    /// 导出默认文件名：`<实例名>.dshpack`（替换路径非法字符，空名回退）。
+    static func exportFileName(instanceName: String) -> String {
+        let trimmed = instanceName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let banned = CharacterSet(charactersIn: "/\\:*?\"<>|\u{0}")
+        let cleaned = String(trimmed.unicodeScalars.map { banned.contains($0) ? "-" : Character($0) })
+            .trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        let base = cleaned.isEmpty ? "dsh-instance" : String(cleaned.prefix(80))
+        return "\(base).\(DSHPackFormat.fileExtension)"
+    }
+
+    /// 导出整合包默认展示名（manifest.name）。
+    static func exportPackName(instance: DSHInstalledVersion) -> String {
+        let name = instance.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { return name }
+        return instance.isPack ? (instance.packName ?? "DSH 整合包") : "DSH \(instance.dshVersion) 实例"
+    }
+
+    /// 导出整合包默认版本（manifest.version）：优先沿用来源包版本，否则 1.0.0。
+    static func exportPackVersion(instance: DSHInstalledVersion) -> String {
+        if let packVersion = instance.packVersion, !packVersion.isEmpty { return packVersion }
+        return "1.0.0"
+    }
+
+    /// 导出按钮禁用原因；nil 表示可以导出。
+    static func exportDisabledReason(snapshotMode: Bool, isBusy: Bool) -> String? {
+        if snapshotMode { return "快照模式不执行导出（不会弹出保存面板）" }
+        if isBusy { return "正在导出 / 导入整合包，请稍候" }
+        return nil
+    }
+
+    // MARK: 卸载
+
+    /// 卸载按钮禁用原因；nil 表示可以卸载。
+    static func uninstallDisabledReason(
+        instance: DSHInstalledVersion,
+        activeInstanceID: String?,
+        isBusy: Bool,
+        isInstalling: Bool
+    ) -> String? {
+        if isInstalling { return "正在安装 DSH，请安装完成后再卸载" }
+        if isBusy { return "DSH 正在启动 / 停止，请先停止" }
+        if isRunning(instance, activeInstanceID: activeInstanceID) {
+            return "实例正在运行，请先在启动卡停止 Web UI"
+        }
+        return nil
     }
 
     // MARK: 启动条件
@@ -196,7 +281,7 @@ enum DSHLaunchPresentation {
     ) -> String? {
         if isInstalling { return "正在安装 DSH，安装完成后才能启动" }
         if isBusy { return "正在启动或停止 DSH，请稍候" }
-        if !hasSelection { return "请先在左侧选择已安装的 DSH 版本" }
+        if !hasSelection { return "请先在左侧选择已安装的 DSH 实例" }
         if !hasNode { return DSHError.nodeNotFound.localizedDescription }
         return nil
     }
@@ -241,5 +326,19 @@ enum DSHLaunchPresentation {
             return .success
         }
         return .secondary
+    }
+
+    // MARK: 整合包导出阶段
+
+    /// 导出进度文案；非导出中返回 nil。
+    static func exportPhaseText(_ state: DSHPackState) -> String? {
+        switch state {
+        case .exporting(let name, let phase, _):
+            return "\(name) · \(phase.title)"
+        case .failed(let message):
+            return message
+        case .idle, .importing:
+            return nil
+        }
     }
 }

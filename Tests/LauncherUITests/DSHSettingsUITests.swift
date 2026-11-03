@@ -107,7 +107,8 @@ final class DSHSettingsUITests: XCTestCase {
             DSHInstalledVersion(version: "0.41.0", installedAt: Date(), path: "/tmp/b", sizeBytes: 2 * 1024 * 1024)
         ]
         let summary = DSHFormatting.installedSummary(versions)
-        XCTAssertTrue(summary.contains("2 个版本"))
+        XCTAssertTrue(summary.contains("2 个实例"))
+        XCTAssertTrue(summary.contains("共"))
     }
 
     func testRedactedURLHidesToken() {
@@ -166,9 +167,10 @@ final class DSHSettingsUITests: XCTestCase {
             withIntermediateDirectories: true
         )
         try Data(repeating: 0xAB, count: 3 * 1024).write(to: versionFile)
-        // 共享 DSH_HOME 下放一个 1KB 的用户数据文件
-        try FileManager.default.createDirectory(at: paths.homeRoot, withIntermediateDirectories: true)
-        try Data(repeating: 0xCD, count: 1024).write(to: paths.homeRoot.appendingPathComponent("key.json"))
+        // 某个实例的独立 DSH_HOME 下放一个 1KB 的用户数据文件
+        let instanceHome = paths.homeDirectory(for: "0.42.0")
+        try FileManager.default.createDirectory(at: instanceHome, withIntermediateDirectories: true)
+        try Data(repeating: 0xCD, count: 1024).write(to: instanceHome.appendingPathComponent("key.json"))
 
         let rows = DSHDataTools.directories(paths: paths)
         XCTAssertEqual(rows.count, DSHDataDirectoryKind.allCases.count)
@@ -177,14 +179,23 @@ final class DSHSettingsUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(versionsRow.bytes, 3 * 1024)
         XCTAssertFalse(versionsRow.sizeText.isEmpty)
 
-        // homes 项展示的是所有版本共享的 launcher DSH_HOME，而不是历史 homes/
-        let homeRow = try XCTUnwrap(rows.first { $0.kind == .home })
-        XCTAssertEqual(homeRow.path, paths.homeRoot.path)
-        XCTAssertTrue(homeRow.title.contains("DSH_HOME"))
+        // homes 项是所有实例 home 的根目录（每个实例一个子目录）
+        let homeRow = try XCTUnwrap(rows.first { $0.kind == .homes })
+        XCTAssertEqual(homeRow.path, paths.homesDirectory.path)
+        XCTAssertTrue(homeRow.title.contains("homes"))
         XCTAssertGreaterThanOrEqual(homeRow.bytes, 1024)
-        XCTAssertTrue(DSHDataDirectoryKind.home.title.contains("DSH_HOME"))
-        XCTAssertFalse(DSHDataDirectoryKind.home.isInsideLauncherRoot)
-        XCTAssertTrue(DSHDataDirectoryKind.versions.isInsideLauncherRoot)
+        XCTAssertTrue(DSHDataDirectoryKind.homes.title.contains("homes"))
+        // 每个实例的 DSH_HOME 相互独立，但都位于 homes/ 下
+        XCTAssertEqual(
+            DSHDataTools.instanceHomePath(paths: paths, instanceID: "0.42.0"),
+            instanceHome.path
+        )
+        XCTAssertNotEqual(
+            paths.homeDirectory(for: "a"),
+            paths.homeDirectory(for: "b")
+        )
+        XCTAssertEqual(paths.homeDirectory(for: "a").deletingLastPathComponent().path, paths.homesDirectory.path)
+        XCTAssertNil(DSHDataTools.instanceHomePath(paths: paths, instanceID: nil))
 
         let notExisting = DSHDataDirectory(kind: .bin, path: "/nonexistent", bytes: 0, exists: false)
         XCTAssertEqual(notExisting.sizeText, "不存在")
@@ -231,59 +242,179 @@ final class DSHSettingsUITests: XCTestCase {
 
     // MARK: - 删除所有数据
 
-    func testDeleteAllRemovesLauncherDataButKeepsHomeAndUserDSH() throws {
+    func testDeleteAllRemovesAllInstanceDataButKeepsUserDSH() throws {
         let paths = try makeTemporaryPaths()
         try paths.ensureDirectories()
-        // 启动器自己的数据：versions / logs / cache / 历史遗留 homes
-        for target in DSHDataDeletion.targets(paths: paths) {
-            try FileManager.default.createDirectory(atPath: target.path, withIntermediateDirectories: true)
-            try Data("x".utf8).write(to: URL(fileURLWithPath: target.path).appendingPathComponent("dummy.txt"))
+        // 两个实例：versions/<id> + homes/<id> + logs/<id>.log
+        for id in ["inst-a", "inst-b"] {
+            let versionDir = paths.versionDirectory(id)
+            try FileManager.default.createDirectory(at: versionDir, withIntermediateDirectories: true)
+            try Data("x".utf8).write(to: versionDir.appendingPathComponent("dummy.txt"))
+            let home = paths.homeDirectory(for: id)
+            try FileManager.default.createDirectory(at: home.appendingPathComponent("profiles/web"), withIntermediateDirectories: true)
+            try Data("plugin".utf8).write(to: home.appendingPathComponent("plugins.json"))
+            try Data("log".utf8).write(to: paths.logFile(for: id))
         }
-        // launcher 的 DSH_HOME：插件 / 会话 / 登录凭据软链，绝不能删
+        try Data(repeating: 0x01, count: 256).write(to: paths.cacheDirectory.appendingPathComponent("plugins.json"))
+        // 迁移前的旧共享 home（属于启动器数据，也应清理）
         try FileManager.default.createDirectory(at: paths.homeRoot, withIntermediateDirectories: true)
-        let sharedFiles = ["profiles/web/package.json", "plugins.json", "keychain.json"]
-        for file in sharedFiles {
-            let url = paths.homeRoot.appendingPathComponent(file)
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try Data("keep-me".utf8).write(to: url)
-        }
+        try Data("legacy".utf8).write(to: paths.homeRoot.appendingPathComponent("old.json"))
 
         let targets = DSHDataDeletion.targets(paths: paths)
-        XCTAssertEqual(targets.count, 4)
+        XCTAssertGreaterThanOrEqual(targets.count, 4)
         XCTAssertFalse(
-            targets.contains { $0.path == paths.homeRoot.path },
-            "删除目标不能包含共享 DSH_HOME"
+            targets.contains { $0.path == paths.userDSHHome.path },
+            "删除目标绝不能包含 ~/.dsh（登录凭据来源）"
         )
+        XCTAssertTrue(targets.contains { $0.id == "homes" })
+        XCTAssertTrue(targets.contains { $0.id == "versions" })
 
         let report = DSHDataDeletion.deleteAll(paths: paths)
-        XCTAssertEqual(report.removed.count, 4)
-        XCTAssertTrue(report.failures.isEmpty)
-        XCTAssertTrue(report.summary.contains("已删除 4 个数据目录"))
-        for target in targets {
-            XCTAssertFalse(
-                FileManager.default.fileExists(atPath: target.path),
-                "\(target.title) 应被删除"
-            )
-        }
-        // 根目录保留（其余目录可重建）
-        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.root.path))
-        // launcher home 及其内容必须原样保留（~/.dsh 的凭据同理不在删除范围）
-        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.homeRoot.path))
-        for file in sharedFiles {
-            let url = paths.homeRoot.appendingPathComponent(file)
-            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path), "\(file) 不应被删除")
-            XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "keep-me")
-        }
+        XCTAssertGreaterThanOrEqual(report.removed.count, 4)
+        XCTAssertTrue(report.failures.isEmpty, "删除失败：\(report.failures)")
+        XCTAssertTrue(report.summary.contains("已删除"))
+        // 实例目录 / home / 日志 / 缓存 / 旧共享 home 都被清掉
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.versionDirectory("inst-a").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.homeDirectory(for: "inst-a").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.logFile(for: "inst-a").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.homeRoot.path))
+        // homes/ 保留空壳，便于下次安装直接写入
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.homesDirectory.path))
+        XCTAssertTrue(report.recreated.contains("实例数据目录"))
+        let remainingHomes = try FileManager.default.contentsOfDirectory(atPath: paths.homesDirectory.path)
+        XCTAssertTrue(remainingHomes.isEmpty, "homes/ 应只剩空壳")
 
+        // 再删一次：没有可删内容，空壳 homes 不会重复计入
         let second = DSHDataDeletion.deleteAll(paths: paths)
         XCTAssertTrue(second.removed.isEmpty)
+        XCTAssertTrue(second.failures.isEmpty)
         XCTAssertTrue(second.summary.contains("没有需要删除"))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.homeRoot.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.homesDirectory.path))
     }
 
+    // MARK: - 实例选择 / 持久化 / 整合包计数
+
+    /// 多实例同版本时按实例 id 选择（不是按版本号）。
+    @MainActor
+    func testMultipleInstancesOfSameVersionSelectedByID() throws {
+        let paths = try makeTemporaryPaths()
+        let settings = makeTemporarySettings()
+        try makeInstance(paths: paths, id: "alpha", name: "测试实例 A", dshVersion: "0.42.0")
+        try makeInstance(
+            paths: paths, id: "beta", name: "整合包实例 B", dshVersion: "0.42.0",
+            kind: .pack, packName: "示例整合包", packVersion: "1.2.3"
+        )
+
+        let store = DSHVersionStore(settings: settings, paths: paths)
+        store.refreshInstalled()
+        XCTAssertEqual(Set(store.installed.map(\.id)), ["alpha", "beta"])
+        XCTAssertEqual(store.instances(of: "0.42.0").count, 2, "同一 DSH 版本可以装多个实例")
+
+        store.select("beta")
+        XCTAssertEqual(settings.dshSelectedInstanceID, "beta")
+        XCTAssertEqual(store.selectedInstalledVersion?.id, "beta")
+        XCTAssertEqual(store.selectedInstalledVersion?.name, "整合包实例 B")
+        XCTAssertTrue(store.selectedInstalledVersion?.isPack == true)
+        XCTAssertEqual(store.selectedInstalledVersion?.dshVersion, "0.42.0")
+
+        store.select("alpha")
+        XCTAssertEqual(settings.dshSelectedInstanceID, "alpha")
+        XCTAssertEqual(store.selectedInstalledVersion?.id, "alpha")
+        XCTAssertFalse(store.selectedInstalledVersion?.isPack == true)
+    }
+
+    /// 默认实例写进设置后能持久化（同一个 defaults 重新加载仍保留）。
+    @MainActor
+    func testDefaultInstancePersistsAcrossSettingsReload() throws {
+        let paths = try makeTemporaryPaths()
+        let suite = "launcher.dsh.tests.instance.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            return XCTFail("无法创建临时 UserDefaults")
+        }
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        try makeInstance(paths: paths, id: "alpha", name: "A", dshVersion: "0.42.0")
+        try makeInstance(paths: paths, id: "beta", name: "B", dshVersion: "0.43.0")
+
+        let settings = LauncherSettings(defaults: defaults)
+        let store = DSHVersionStore(settings: settings, paths: paths)
+        store.refreshInstalled()
+        store.select("beta")
+        XCTAssertEqual(settings.dshSelectedInstanceID, "beta")
+
+        let reloaded = LauncherSettings(defaults: defaults)
+        XCTAssertEqual(reloaded.dshSelectedInstanceID, "beta", "默认实例应持久化到 UserDefaults")
+        XCTAssertEqual(reloaded.dshSelectedVersion, "", "旧字段不再被写入")
+    }
+
+    /// 实例计数包含整合包数量。
+    func testInstanceCountAndSummaryIncludePacks() {
+        let vanillaA = DSHInstalledVersion(
+            id: "a", name: "A", dshVersion: "0.42.0", installedAt: Date(), path: "/tmp/a", sizeBytes: 1024
+        )
+        let vanillaB = DSHInstalledVersion(
+            id: "b", name: "B", dshVersion: "0.42.0", installedAt: Date(), path: "/tmp/b", sizeBytes: 2048
+        )
+        let pack = DSHInstalledVersion(
+            id: "c", name: "整合包 C", dshVersion: "0.42.0", installedAt: Date(), path: "/tmp/c",
+            sizeBytes: 4096, kind: .pack, packName: "示例整合包", packVersion: "1.0.0"
+        )
+
+        XCTAssertEqual(DSHFormatting.instanceCountText([]), "还没有安装实例")
+        XCTAssertEqual(DSHFormatting.instanceCountText([vanillaA, vanillaB]), "2 个实例")
+        XCTAssertEqual(DSHFormatting.instanceCountText([vanillaA, vanillaB, pack]), "3 个实例 · 1 个整合包")
+
+        let summary = DSHFormatting.installedSummary([vanillaA, vanillaB, pack])
+        XCTAssertTrue(summary.contains("3 个实例 · 1 个整合包"))
+        XCTAssertTrue(summary.contains("共"))
+        XCTAssertTrue(summary.contains("7 KB"))
+
+        XCTAssertEqual(DSHFormatting.instanceLabel(pack), "整合包 C · DSH 0.42.0")
+        XCTAssertEqual(DSHFormatting.instanceDetail(pack), "示例整合包 v1.0.0 · DSH 0.42.0")
+        XCTAssertEqual(DSHFormatting.instanceDetail(vanillaA), "DSH 0.42.0")
+    }
+
+    // MARK: - 快照安全
+
+    /// 快照模式渲染设置页：不发网络 / 不探测运行时 / 不创建磁盘目录，且能出图。
+    @MainActor
+    func testSettingsPageRendersInSnapshotModeWithoutDiskIO() throws {
+        let paths = try makeTemporaryPaths()
+        let suite = "launcher.dsh.tests.snapshot.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            return XCTFail("无法创建临时 UserDefaults")
+        }
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
+        let settings = LauncherSettings(defaults: defaults)
+        settings.dshSelectedInstanceID = "snapshot-instance"
+        let versions = DSHVersionStore(settings: settings, paths: paths)
+        let process = DSHProcessController(settings: settings, paths: paths)
+        let plugins = DSHPluginStore(settings: settings, paths: paths)
+        let manager = LauncherThemeManager(presets: LauncherThemes.all, defaults: defaults)
+        let router = LauncherRouter(initialTab: .settings, initialProduct: .dsh)
+
+        let view = DSHSettingsPage(initialSection: .environment)
+            .environment(versions)
+            .environment(process)
+            .environment(plugins)
+            .launcherRouterEnvironment(router)
+            .launcherThemeEnvironment(manager)
+            .environment(\.launcherSnapshotMode, true)
+            .frame(width: 1080, height: 720)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 1
+        renderer.proposedSize = ProposedViewSize(width: 1080, height: 720)
+        XCTAssertNotNil(renderer.nsImage, "快照模式应能渲染设置页")
+
+        // 快照模式不应创建 / 探测数据目录
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.versionsDirectory.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.homesDirectory.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.logsDirectory.path))
+        // 不产生网络目录
+        XCTAssertEqual(plugins.catalogState, .idle)
+        XCTAssertEqual(versions.catalogState, .idle)
+    }
+
+    // MARK: - 日志文件工具
     // MARK: - 日志文件工具
 
     func testLogTailInfoAndTruncate() throws {
@@ -377,22 +508,29 @@ final class DSHSettingsUITests: XCTestCase {
 
         let store = DSHVersionStore(settings: settings, paths: paths)
         store.refreshInstalled()
-        XCTAssertEqual(store.installed.map(\.version), ["0.42.0"])
-        XCTAssertEqual(store.settings.dshSelectedVersion, "0.42.0", "首次扫描应自动选中已安装版本")
-        XCTAssertEqual(store.selectedInstalledVersion?.version, "0.42.0")
+        XCTAssertEqual(store.installed.map(\.id), ["0.42.0"])
+        XCTAssertEqual(store.installed.first?.dshVersion, "0.42.0")
+        // 旧目录名被当作实例 ID，选中状态存在 dshSelectedInstanceID。
+        XCTAssertEqual(store.settings.dshSelectedInstanceID, "0.42.0", "首次扫描应自动选中已安装实例")
+        XCTAssertEqual(store.selectedInstalledVersion?.id, "0.42.0")
 
         store.select("0.42.0")
-        XCTAssertEqual(settings.dshSelectedVersion, "0.42.0")
+        XCTAssertEqual(settings.dshSelectedInstanceID, "0.42.0")
 
-        // 共享 DSH_HOME 里放一份用户数据，卸载版本后必须保留
+        // 实例自己的 DSH_HOME 会随实例卸载删除；旧共享 home（凭据来源缓存）不动
+        try FileManager.default.createDirectory(
+            at: paths.homeDirectory(for: "0.42.0"),
+            withIntermediateDirectories: true
+        )
         try FileManager.default.createDirectory(at: paths.homeRoot, withIntermediateDirectories: true)
-        let sharedMarker = paths.homeRoot.appendingPathComponent("session.json")
-        try Data("shared".utf8).write(to: sharedMarker)
+        let legacyMarker = paths.homeRoot.appendingPathComponent("session.json")
+        try Data("shared".utf8).write(to: legacyMarker)
 
         XCTAssertTrue(store.uninstall("0.42.0"))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: sharedMarker.path), "共享 DSH_HOME 不应随版本卸载被删")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyMarker.path), "旧共享 home 不应随实例卸载被删")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.homeDirectory(for: "0.42.0").path))
         XCTAssertTrue(store.installed.isEmpty)
-        XCTAssertTrue(settings.dshSelectedVersion.isEmpty)
+        XCTAssertTrue(settings.dshSelectedInstanceID.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: paths.versionDirectory("0.42.0").path))
     }
 
@@ -421,6 +559,38 @@ final class DSHSettingsUITests: XCTestCase {
         }
         // homeRoot 也放在临时目录里，测试绝不触碰真实 ~/.dsh
         return DSHPaths(root: root, homeRoot: root.appendingPathComponent("shared-home", isDirectory: true))
+    }
+
+    /// 造一个实例：目录 + 入口脚本 + 安装元数据。
+    private func makeInstance(
+        paths: DSHPaths,
+        id: String,
+        name: String,
+        dshVersion: String,
+        size: Int64 = 1024,
+        kind: DSHInstanceKind = .vanilla,
+        packName: String? = nil,
+        packVersion: String? = nil
+    ) throws {
+        let script = paths.cliScript(for: id)
+        try FileManager.default.createDirectory(
+            at: script.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("// dsh bin".utf8).write(to: script)
+        let metadata = DSHInstalledVersion(
+            id: id,
+            name: name,
+            dshVersion: dshVersion,
+            installedAt: Date(),
+            path: paths.versionDirectory(id).path,
+            sizeBytes: size,
+            kind: kind,
+            packName: packName,
+            packVersion: packVersion
+        )
+        let data = try JSONEncoder().encode(metadata)
+        try data.write(to: paths.versionDirectory(id).appendingPathComponent("launcher-install.json"))
     }
 
     /// 建一个临时 UserDefaults 设置对象。

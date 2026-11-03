@@ -42,7 +42,13 @@ enum LauncherCLI {
         }
         for version in versions.installed {
             let size = ByteCountFormatter.string(fromByteCount: version.sizeBytes ?? 0, countStyle: .file)
-            print("  - \(version.version)  \(size)  \(version.path)")
+            var tags: [String] = []
+            if version.isPack {
+                tags.append("整合包：\(version.packName ?? "?") \(version.packVersion ?? "")")
+            }
+            if version.legacy { tags.append("旧数据迁移") }
+            let suffix = tags.isEmpty ? "" : "  [\(tags.joined(separator: " · "))]"
+            print("  - \(version.name)（DSH \(version.dshVersion)）  \(size)  \(version.path)\(suffix)")
         }
         guard let selected = versions.selectedInstalledVersion ?? versions.installed.first else {
             return 1
@@ -52,7 +58,7 @@ enum LauncherCLI {
         settings.dshAutoOpenBrowser = false
         defer { settings.dshAutoOpenBrowser = previousAutoOpen }
         let controller = DSHProcessController(settings: settings, paths: paths)
-        print("… 启动 DSH \(selected.version) Web UI")
+        print("… 启动 DSH \(selected.name)（DSH \(selected.dshVersion)）Web UI")
         let started = await controller.start(version: selected)
         defer { controller.stopSynchronously() }
         guard started, let url = controller.state.url else {
@@ -61,10 +67,188 @@ enum LauncherCLI {
             if !tail.isEmpty { print(tail) }
             return 1
         }
-        print("✓ DSH Web UI 已启动：\(url)")
-        print("  端口：\(controller.activePort ?? 0) · 日志：\(paths.logFile(for: selected.version).path)")
+        let maskedURL = url.replacingOccurrences(
+            of: "token=[^&\\s\"']+",
+            with: "token=***",
+            options: .regularExpression
+        )
+        print("✓ DSH Web UI 已启动：\(maskedURL)")
+        print("  端口：\(controller.activePort ?? 0) · 日志：\(paths.logFile(for: selected.id).path)")
         print("  已停止（本次只验证启动链路，不保留进程）")
         return 0
+    }
+
+    /// `--dsh-install <version> [name]`：安装一个 DSH 实例（网络）。
+    static func dshInstall(arguments: [String], startIndex: Int) async -> Int32 {
+        guard startIndex < arguments.count else {
+            print("用法：--dsh-install <version> [实例名]")
+            return 2
+        }
+        let version = arguments[startIndex]
+        let name = startIndex + 1 < arguments.count ? arguments[startIndex + 1] : nil
+        let settings = LauncherSettings(defaults: UserDefaults(suiteName: "launcher.cli.dsh") ?? .standard)
+        let paths = DSHPaths.default
+        let store = DSHVersionStore(settings: settings, paths: paths)
+        print("… 安装 DSH \(version)（实例名：\(name ?? DSHVersionStore.defaultName(for: version))）")
+        await store.install(version, name: name)
+        if case .failed(_, let message) = store.installState {
+            print("✗ 安装失败：\(message)")
+            return 1
+        }
+        guard let selected = store.selectedInstalledVersion else {
+            print("✗ 安装后没有选中实例")
+            return 1
+        }
+        print("✓ 已安装：\(selected.name)（DSH \(selected.dshVersion)）")
+        return 0
+    }
+
+    /// `--dsh-pack-export <实例ID或名字> <输出.dshpack> [--runtime bundled|online] [--no-plugin-payload]`
+    static func dshPackExport(arguments: [String], startIndex: Int) async -> Int32 {
+        guard startIndex + 1 < arguments.count else {
+            print("用法：--dsh-pack-export <实例ID或名字> <输出.dshpack> [--runtime bundled|online] [--no-plugin-payload]")
+            return 2
+        }
+        let key = arguments[startIndex]
+        let destination = URL(fileURLWithPath: (arguments[startIndex + 1] as NSString).expandingTildeInPath)
+        let runtime: DSHPackRuntimeMode = stringOption("--runtime", arguments: arguments, startIndex: startIndex)
+            .flatMap { DSHPackRuntimeMode(rawValue: $0) } ?? .bundled
+        let includePayloads = !arguments.contains("--no-plugin-payload")
+        let settings = LauncherSettings(defaults: UserDefaults(suiteName: "launcher.cli.dsh") ?? .standard)
+        let paths = DSHPaths.default
+        let versions = DSHVersionStore(settings: settings, paths: paths)
+        let plugins = DSHPluginStore(settings: settings, paths: paths)
+        let packs = DSHPackService(paths: paths, versions: versions, plugins: plugins, settings: settings)
+        let exact = versions.installed.filter { $0.id == key || $0.name == key }
+        let byVersion = versions.installed.filter { $0.dshVersion == key }
+        let candidates = exact.isEmpty ? byVersion : exact
+        if candidates.isEmpty {
+            print("✗ 未找到实例：\(key)")
+            return 1
+        }
+        if candidates.count > 1, exact.isEmpty {
+            print("✗ 版本 \(key) 对应多个实例，请用实例 ID 或名字指定：")
+            for candidate in candidates {
+                print("  - \(candidate.name)  \(candidate.id)")
+            }
+            return 1
+        }
+        guard let instance = candidates.first else { return 1 }
+        let name = stringOption("--pack-name", arguments: arguments, startIndex: startIndex) ?? instance.name
+        print("… 导出 \(instance.name)（\(runtime.rawValue)，插件离线载荷：\(includePayloads ? "是" : "否")）→ \(destination.path)")
+        let result = await packs.exportPack(
+            instance: instance,
+            name: name,
+            version: "1.0.0",
+            description: "由 LauncherALL 导出的 DSH 整合包",
+            author: "LauncherALL",
+            runtime: runtime,
+            includePluginPayloads: includePayloads,
+            to: destination
+        )
+        if let result {
+            print("✓ 已导出：\(result.path)")
+            return 0
+        }
+        print("✗ 导出失败：\(packs.lastError?.localizedDescription ?? "未知错误")")
+        return 1
+    }
+
+    /// `--dsh-pack-import <file.dshpack> [实例名]`
+    static func dshPackImport(arguments: [String], startIndex: Int) async -> Int32 {
+        guard startIndex < arguments.count else {
+            print("用法：--dsh-pack-import <file.dshpack> [实例名]")
+            return 2
+        }
+        let url = URL(fileURLWithPath: (arguments[startIndex] as NSString).expandingTildeInPath)
+        let name = startIndex + 1 < arguments.count ? arguments[startIndex + 1] : nil
+        let settings = LauncherSettings(defaults: UserDefaults(suiteName: "launcher.cli.dsh") ?? .standard)
+        let paths = DSHPaths.default
+        let versions = DSHVersionStore(settings: settings, paths: paths)
+        let plugins = DSHPluginStore(settings: settings, paths: paths)
+        let packs = DSHPackService(paths: paths, versions: versions, plugins: plugins, settings: settings)
+        print("… 导入整合包 \(url.path)（实例名：\(name ?? "使用包名")）")
+        if let instance = await packs.importPack(from: url, customName: name) {
+            print("✓ 已导入：\(instance.name)（DSH \(instance.dshVersion)，\(instance.kind == .pack ? "整合包" : "普通")）")
+            return 0
+        }
+        print("✗ 导入失败：\(packs.lastError?.localizedDescription ?? "未知错误")")
+        for line in packs.logLines.suffix(8) { print("  \(line)") }
+        return 1
+    }
+
+    /// `--dsh-pack-inspect <file.dshpack>`：打印整合包 manifest（不导入）。
+    static func dshPackInspect(arguments: [String], startIndex: Int) -> Int32 {
+        guard startIndex < arguments.count else {
+            print("用法：--dsh-pack-inspect <file.dshpack>")
+            return 2
+        }
+        let url = URL(fileURLWithPath: (arguments[startIndex] as NSString).expandingTildeInPath)
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DSHPackInspect-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        do {
+            try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+            process.arguments = ["-q", "-o", url.path, "-d", temporary.path]
+            try process.run()
+            process.waitUntilExit()
+            let manifestURL = temporary.appendingPathComponent(DSHPackFormat.manifestName)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let manifest = try decoder.decode(DSHPackManifest.self, from: Data(contentsOf: manifestURL))
+            print("格式：\(manifest.format) v\(manifest.formatVersion)")
+            print("名称：\(manifest.name) \(manifest.version)")
+            print("DSH 版本：\(manifest.dshVersion) · 运行时：\(manifest.runtime.rawValue)")
+            print("插件：\(manifest.plugins.count) 个")
+            for plugin in manifest.plugins {
+                print("  - \(plugin.name)  \(plugin.spec)  \(plugin.payload ?? "（无离线载荷）")")
+            }
+            return 0
+        } catch {
+            print("✗ 读取失败：\(error.localizedDescription)")
+            return 1
+        }
+    }
+
+    /// `--dsh-remove <实例ID或名字>`：卸载一个 DSH 实例。
+    static func dshRemove(arguments: [String], startIndex: Int) -> Int32 {
+        guard startIndex < arguments.count else {
+            print("用法：--dsh-remove <实例ID或名字>")
+            return 2
+        }
+        let key = arguments[startIndex]
+        let settings = LauncherSettings(defaults: UserDefaults(suiteName: "launcher.cli.dsh") ?? .standard)
+        let paths = DSHPaths.default
+        let store = DSHVersionStore(settings: settings, paths: paths)
+        guard let instance = store.installed.first(where: { $0.id == key || $0.name == key || $0.dshVersion == key }) else {
+            print("✗ 未找到实例：\(key)")
+            return 1
+        }
+        if dshInstanceProcessRunning(id: instance.id) {
+            print("✗ 实例正在运行（检测到 dsh web 进程），请先停止")
+            return 1
+        }
+        let ok = store.uninstall(instance.id)
+        print(ok ? "✓ 已卸载：\(instance.name)" : "✗ 卸载失败：\(store.lastError?.localizedDescription ?? "未知错误")")
+        return ok ? 0 : 1
+    }
+
+    /// 用 pgrep 检查某个 DSH 实例的 Web UI 进程是否在运行（CLI 无法访问 GUI 的内存状态）。
+    private static func dshInstanceProcessRunning(id: String) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        process.arguments = ["-f", "versions/\(id)/node_modules/@deepseek-ai/dsh/lib/bin.js"]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        } catch {
+            return false
+        }
     }
 
     /// `--detect-java`：列出本机 Java 运行时。

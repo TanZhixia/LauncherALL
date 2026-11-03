@@ -160,7 +160,7 @@ swift run MCLauncher --install 1.21.4                       # 真实下载安装
 
 ## 10. 测试覆盖
 
-`swift test` 共 **215 个用例**（全部离线）：
+`swift test` 共 **266 个用例**（全部离线）：
 
 - `LauncherBackendTests`（12）：规则求值、离线 UUID、参数替换与清理、版本 JSON 兼容、版本扫描、命令构建。
 - `SharedInteractionsTests`（20）：镜像 URL 改写、版本比较、实例重命名/复制/删除（真实临时目录）、启动历史持久化与"已停止"状态、玩家名校验、空值旗标清理、更新源解析、安装取消判定（`CancellationError` / `URLError.cancelled`）、父版本依赖保护与清理候选判龄。
@@ -178,20 +178,23 @@ LauncherALL 的第二个启动器管理官方 `@deepseek-ai/dsh` 的 **Web UI �
 | 模块 | 职责 |
 | --- | --- |
 | `Features/DSH/DSHModels.swift` | 版本 / 插件 / 目录状态 / 安装状态 / 进程状态 / 错误，以及完整 semver 比较（含 prerelease） |
-| `Features/DSH/DSHPaths.swift` | launcher 数据目录、版本目录、共享 DSH_HOME（凭据软链）、Node/pnpm/npm 定位与 pnpm shim |
+| `Features/DSH/DSHPaths.swift` | launcher 数据目录、实例目录、每实例独立 DSH_HOME（凭据软链）、Node/pnpm/npm 定位与 pnpm shim |
 | `Features/DSH/DSHRegistryClient.swift` | npm registry 版本目录（`@deepseek-ai%2fdsh`，40 个版本）与 dshmarket 插件加载源（`plugins.json`，8000+ 条） |
-| `Features/DSH/DSHVersionStore.swift` | 已安装版本扫描 / 安装 / 卸载 / 选择 / 磁盘缓存 |
+| `Features/DSH/DSHVersionStore.swift` | DSH 实例扫描 / 安装（可自定义名字、同版本多开）/ 卸载 / 选择 / 旧数据迁移 / 磁盘缓存 |
 | `Features/DSH/DSHProcessController.swift` | 启动 / 停止 `dsh --profile web --no-open --port …`，解析带 token 的启动 URL，日志落盘与脱敏 |
-| `Features/DSH/DSHPluginStore.swift` | 插件目录搜索 / 分类 / 排序 / 安装 / 卸载（转发 `dsh plugin --profile web add/remove`） |
+| `Features/DSH/DSHPluginStore.swift` | 插件目录搜索 / 分类 / 排序 / 按实例安装 / 卸载（转发 `dsh plugin --profile web add/remove`） |
+| `Features/DSH/DSHPackModels.swift` | LauncherALL 私有整合包 `.dshpack`：manifest（名称/版本/DSH 版本/运行时模式/插件清单）、状态与错误 |
+| `Features/DSH/DSHPackService.swift` | 整合包导出 / 导入：bundled 携带 DSH 本体、online 只记录版本；可选插件 npm tarball 离线载荷；进度、日志、取消 |
 | `Launcher/Pages/DSH/*` | 四个 DSH 页面（启动 / 下载 / 设置 / 更多），与 Minecraft 页面同构 |
 
-- **下载源**：`https://registry.npmjs.org/@deepseek-ai/dsh`，包名斜杠编码为 `%2f`（不能二次编码）；可安装全部历史版本，安装到 `~/Library/Application Support/BlockLauncher/DSH/versions/<version>/node_modules`（每个版本约 850 MB）。
-- **安装**：在版本目录里用 pnpm（系统优先，否则 DSH 桌面端自带 pnpm 的 shim，最后 npm）执行 `add @deepseek-ai/dsh@<version>`；完成后校验 `node_modules/@deepseek-ai/dsh/lib/bin.js` 并写入 `launcher-install.json`（安装时间 / 大小）。取消安装会终止子进程并清理半成品目录。
+- **实例模型**：每个 DSH 安装是一个「实例」，目录为 `versions/<实例 UUID>`，元数据 `launcher-install.json` 记录 `id/name/dshVersion/kind(pack|vanilla)/packName/packVersion/installedAt/sizeBytes`。同一个 npm 版本可以安装多次，名字可自定义（默认 `DSH <版本>`）；旧版按版本号建目录的数据会自动迁移成 legacy 实例，旧的共享 home 会迁移到第一个 legacy 实例的独立 home。
+- **下载源**：`https://registry.npmjs.org/@deepseek-ai/dsh`，包名斜杠编码为 `%2f`（不能二次编码）；可安装全部历史版本（每个约 850 MB）。安装优先用 npm（pnpm 10+ 会因 `ERR_PNPM_IGNORED_BUILDS` 阻止 koffi / node-pty 等原生依赖的构建脚本），只有 pnpm 时自动解析被忽略的包名并用 `--allow-build` 重试。完成后校验 `node_modules/@deepseek-ai/dsh/lib/bin.js`。
 - **Node**：优先登录 shell 里的标准 Node（nvm/Homebrew），其次 DSH 桌面端自带运行时；GUI 进程 PATH 很窄，因此会通过登录 shell 与已知路径探测，子进程 PATH 会补齐 node / pnpm / npm 目录。
-- **启动**：`node …/bin.js --profile web --no-open --port <port>`（端口 0 交给 dsh 自动分配）；`DSH_HOME` 固定为 launcher 的共享 home（`~/Library/Application Support/BlockLauncher/DSH/home`），首次启动把 `~/.dsh/.credentials.yaml`、`.anonymous-user-id`、`settings.yaml` 软链进来复用登录 / API Key，避免 Web UI 要求重新输入密钥。解析 stdout 的 `dsh web: <url>` 得到带一次性 token 的地址；日志里 token 会脱敏成 `token=***`，日志文件 0600。
+- **启动**：`node …/bin.js --profile web --no-open --port <port>`（端口 0 交给 dsh 自动分配）；每个实例的 `DSH_HOME` 是 `~/Library/Application Support/BlockLauncher/DSH/homes/<实例 UUID>`，首次启动把 `~/.dsh/.credentials.yaml`、`.anonymous-user-id`、`settings.yaml` 软链进来复用登录 / API Key；插件、会话、profile 因此按实例隔离。解析 stdout 的 `dsh web: <url>` 得到带一次性 token 的地址；日志里 token 脱敏成 `token=***`，日志文件 0600。
 - **插件市场**：加载源默认 `https://awesome-dsh-plugin.com/plugins.json`（dshmarket 自身使用的数据源）——字段 `name/owner/url/page/category/description{en,zh}/npm/version/stars/capabilities/install`；安装标识优先 `npm`，否则取 `install` 命令 `add` 后的 spec。安装 / 卸载真实执行 `dsh plugin --profile web add|remove <spec>`，并读取 `$DSH_HOME/profiles/web/package.json` 判定已安装。
-- **CLI**：`swift run MCLauncher --dsh-check` 检查 Node/pnpm 环境、打印已安装版本、拉取 npm 版本数，并真实启动一次 Web UI 后停止（不打开浏览器）。
-- **测试**：`DSHBackendTests`（17）+ `DSHDownloadUITests`（14）+ `DSHLaunchUITests`（12）+ `DSHSettingsUITests`（16）覆盖 semver、版本目录 URL / 解码、插件加载源与 install spec、目录布局、安装扫描/卸载、已安装插件、端口、命令执行、pnpm shim、共享 DSH_HOME、token 脱敏。
+- **整合包 `.dshpack`**：LauncherALL 私有 zip 格式（manifest.json + 可选 `payload/runtime/` + `payload/plugins/*.tgz`）。导出支持 `bundled`（复制该实例的 DSH node_modules，离线可用，约几百 MB）与 `online`（只记录版本号，导入时从 npm 安装）；插件清单来自实例 web profile 的 dependencies，可选 `npm pack` 打包离线载荷；导入时创建新实例（可自定义名字），bundled 直接解出运行时，插件按 `file:` 本地 tarball 或原 spec 安装到新实例自己的 profile。
+- **CLI**：`--dsh-check` / `--dsh-install <version> [name]` / `--dsh-remove <id|name>` / `--dsh-pack-export <instance> <out> [--runtime bundled|online]` / `--dsh-pack-import <file> [name]` / `--dsh-pack-inspect <file>`。
+- **测试**：`DSHBackendTests` + `DSHDownloadUITests` + `DSHLaunchUITests` + `DSHSettingsUITests` + `DSHPackTests` 覆盖 semver、版本目录 URL / 解码、插件加载源与 install spec、实例目录 / 每实例 home、安装扫描/卸载、已安装插件、端口、命令执行、pnpm shim、token 脱敏，以及整合包 manifest / bundled 导出导入 / online 导出 / 离线载荷持久化与再导出 / 导入失败与取消回滚 / online guard / symlink 拒绝 / 原子导出 / 非法包。
 
 ## 12. 已知限制
 
@@ -207,4 +210,4 @@ LauncherALL 的第二个启动器管理官方 `@deepseek-ai/dsh` 的 **Web UI �
 - 语言切换只覆盖「设置」页（258 键 × zh-Hans/en/ja），其余页面仍为中文，界面会如实说明。
 - 更新通道目前仅记录偏好，检查更新只读取更新源地址。
 - DSH 启动器只管理 `@deepseek-ai/dsh` 的 Web UI 版本；插件安装依赖 pnpm（无系统 pnpm 时用 DSH 桌面端自带 pnpm 生成 shim）；Web UI 在浏览器打开，不内嵌。
-- DSH 的 `DSH_HOME` 由 launcher 管理（所有版本共享，凭据从 `~/.dsh` 软链复用）；插件 / 会话与系统 DSH 的 web profile 分开，卸载版本只删该版本 node_modules 与日志。
+- 每个 DSH 实例有独立 `DSH_HOME`（`homes/<实例 UUID>`，凭据从 `~/.dsh` 软链复用）；插件 / 会话与系统 DSH 的 web profile 分开，卸载实例只删该实例的 node_modules、home 与日志；旧版共享 home 会自动迁移到第一个 legacy 实例。

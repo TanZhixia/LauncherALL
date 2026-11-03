@@ -72,12 +72,14 @@ public enum DSHDownloadFormat {
 public enum DSHDownloadDeepLink: Equatable, Sendable {
     case versions
     case plugins
+    case packs
 
     /// 动作字符串 → 目标分类；未知动作返回 nil（不消费，留给别的页面处理）。
     public static func destination(for action: String?) -> DSHDownloadDeepLink? {
         switch action {
         case "dsh-versions": return .versions
         case "dsh-plugins": return .plugins
+        case "dsh-packs": return .packs
         default: return nil
         }
     }
@@ -87,9 +89,9 @@ public enum DSHDownloadDeepLink: Equatable, Sendable {
 
 /// DSH 版本列表的分组结果：已安装的排前面，其余按版本号倒序。
 public struct DSHVersionPartition: Equatable, Sendable {
-    /// 已安装的远端版本（按版本号倒序）。
+    /// 已有实例的远端版本（按版本号倒序）。
     public let installed: [DSHVersionInfo]
-    /// 未安装的远端版本（按版本号倒序）。
+    /// 还没有实例的远端版本（按版本号倒序）。
     public let available: [DSHVersionInfo]
     /// 远端版本总数。
     public let total: Int
@@ -107,9 +109,9 @@ public struct DSHVersionPartition: Equatable, Sendable {
     public var hasAvailable: Bool { !available.isEmpty }
 }
 
-/// DSH 下载页的列表逻辑（分页 / 标签 / 分类名），全部是纯函数。
+/// DSH 下载页的列表逻辑（分区 / 实例分组 / 标签 / 分类名），全部是纯函数。
 public enum DSHDownloadList {
-    /// 版本分区：已安装优先，同组内按版本号倒序。
+    /// 版本分区：已有实例的版本优先，同组内按版本号倒序。
     public static func partition(
         _ versions: [DSHVersionInfo],
         installedIDs: Set<String>
@@ -125,6 +127,29 @@ public enum DSHDownloadList {
             available: availableVersions,
             total: versions.count
         )
+    }
+
+    /// 按 DSH 版本号聚合实例（同一版本可以安装多次）。
+    public static func instancesByVersion(
+        _ instances: [DSHInstalledVersion]
+    ) -> [String: [DSHInstalledVersion]] {
+        var result: [String: [DSHInstalledVersion]] = [:]
+        for instance in instances {
+            result[instance.dshVersion, default: []].append(instance)
+        }
+        for key in result.keys {
+            result[key]?.sort { lhs, rhs in
+                lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+            }
+        }
+        return result
+    }
+
+    /// 本地整合包实例（按安装时间倒序）。
+    public static func packInstances(_ instances: [DSHInstalledVersion]) -> [DSHInstalledVersion] {
+        instances
+            .filter(\.isPack)
+            .sorted { $0.installedAt > $1.installedAt }
     }
 
     /// 版本标签：优先用版本自带的 distTags，其次从目录的 dist-tags 反查（latest / next / alpha…）。
@@ -158,6 +183,129 @@ public enum DSHDownloadList {
     /// 能力标签总数。
     public static func capabilityCount(_ entry: DSHPluginEntry) -> Int {
         entry.capabilities.count
+    }
+
+    /// 实例的一行描述：`DSH 0.2.1 · 整合包 Foo v1 · 1.2 GB`。
+    public static func instanceSummary(_ instance: DSHInstalledVersion) -> String {
+        var parts: [String] = ["DSH \(instance.dshVersion)"]
+        if instance.isPack {
+            var pack = "整合包"
+            if let name = instance.packName, !name.isEmpty { pack += " \(name)" }
+            if let version = instance.packVersion, !version.isEmpty { pack += " v\(version)" }
+            parts.append(pack)
+        }
+        if let size = instance.sizeBytes, size > 0 {
+            parts.append(DSHDownloadFormat.size(size))
+        }
+        if instance.legacy {
+            parts.append("旧版实例")
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
+// MARK: - 整合包 UI 辅助
+
+/// `.dshpack` 整合包相关的展示 / 校验逻辑（纯函数，便于单测）。
+public enum DSHDownloadPackUI {
+    /// 私有整合包扩展名。
+    public static var fileExtension: String { DSHPackFormat.fileExtension }
+
+    /// 导出时默认文件名：`<实例名>.dshpack`，非法文件名字符替换为 `-`。
+    public static func exportFileName(_ instanceName: String) -> String {
+        let banned = CharacterSet(charactersIn: "/\\:*?\"<>|\n\r\t")
+        let cleaned = instanceName
+            .components(separatedBy: banned)
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = cleaned.isEmpty ? "DSH Pack" : String(cleaned.prefix(80))
+        let ext = ".\(fileExtension)"
+        return base.lowercased().hasSuffix(ext) ? base : base + ext
+    }
+
+    /// 是否是 `.dshpack` 文件。
+    public static func isPackFile(_ url: URL) -> Bool {
+        url.pathExtension.lowercased() == fileExtension
+    }
+
+    /// 导入时默认实例名（取文件名去掉扩展名）。
+    public static func defaultImportName(for url: URL) -> String {
+        let base = url.deletingPathExtension().lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return base.isEmpty ? "DSH 整合包" : String(base.prefix(60))
+    }
+
+    /// 整合包操作卡片标题（非进行中返回 nil）。
+    public static func busyTitle(_ state: DSHPackState) -> String? {
+        switch state {
+        case .exporting(let name, _, _): return "正在导出「\(name)」"
+        case .importing(let name, _, _): return "正在导入「\(name)」"
+        case .idle, .failed: return nil
+        }
+    }
+
+    /// 整合包操作阶段文案。
+    public static func busyPhaseText(_ state: DSHPackState) -> String? {
+        switch state {
+        case .exporting(_, let phase, _), .importing(_, let phase, _): return phase.title
+        case .idle, .failed: return nil
+        }
+    }
+
+    /// 整合包操作进度（0...1）。
+    public static func busyProgress(_ state: DSHPackState) -> Double? {
+        switch state {
+        case .exporting(_, _, let progress), .importing(_, _, let progress): return progress
+        case .idle, .failed: return nil
+        }
+    }
+
+    /// 打包模式说明（导出按钮的 subtitle / tooltip）。
+    public static func runtimeDescription(_ mode: DSHPackRuntimeMode) -> String {
+        switch mode {
+        case .bundled: return "包含 DSH 本体与插件载荷，离线可用，文件较大"
+        case .online: return "只记录版本与插件清单，导入时从 npm 安装，文件较小"
+        }
+    }
+
+    /// 导出被阻止的原因（可用表示 nil）。
+    public static func exportBlockedReason(
+        instance: DSHInstalledVersion?,
+        state: DSHPackState,
+        environmentReady: Bool,
+        isReadOnly: Bool
+    ) -> String? {
+        if isReadOnly { return "快照模式不执行导出" }
+        if state.isBusy { return "已有整合包任务在进行" }
+        guard instance != nil else { return "请先安装并选择一个 DSH 实例" }
+        if !environmentReady { return "缺少 Node.js / 包管理器" }
+        return nil
+    }
+
+    /// 导入被阻止的原因（可用表示 nil）。
+    public static func importBlockedReason(
+        state: DSHPackState,
+        environmentReady: Bool,
+        isReadOnly: Bool
+    ) -> String? {
+        if isReadOnly { return "快照模式不执行导入" }
+        if state.isBusy { return "已有整合包任务在进行" }
+        if !environmentReady { return "缺少 Node.js / 包管理器" }
+        return nil
+    }
+
+    /// 整合包实例一行描述：`DSH 0.2.1 · 整合包 Foo v1 · 1.2 GB · 安装于 2026-11-03`。
+    public static func packSubtitle(_ instance: DSHInstalledVersion) -> String {
+        var parts: [String] = ["DSH \(instance.dshVersion)"]
+        var pack = "整合包"
+        if let name = instance.packName, !name.isEmpty { pack += " \(name)" }
+        if let version = instance.packVersion, !version.isEmpty { pack += " v\(version)" }
+        parts.append(pack)
+        if let size = instance.sizeBytes, size > 0 {
+            parts.append(DSHDownloadFormat.size(size))
+        }
+        parts.append("安装于 \(DSHDownloadFormat.date(instance.installedAt))")
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -223,27 +371,32 @@ public enum DSHEnvironmentProbe {
 
 // MARK: - 版本行
 
-/// 版本列表的一行：版本号 + 标签 + 发布时间 / 大小 + 安装 / 卸载 / 使用操作。
+/// 版本列表的一行：版本号 + 标签 + 实例列表（同名/同版本多开）+ 安装 / 管理操作。
 struct DSHVersionRowView: View {
     @Environment(\.launcherTheme) private var theme
 
     let info: DSHVersionInfo
     let tags: [String]
-    let installedAt: Date?
-    let isInstalled: Bool
-    let isSelected: Bool
+    /// 该 DSH 版本已安装的实例（可能 0 个、也可能同版本多开）。
+    let instances: [DSHInstalledVersion]
+    let selectedInstanceID: String?
+    let runningInstanceID: String?
     let isInstalling: Bool
     let isBusy: Bool
     let isReadOnly: Bool
     let canInstall: Bool
     let installDisabledReason: String?
+    /// 实例管理菜单（设为当前 / 卸载 / 导出…），没有实例时可为空。
+    let menuGroups: [LauncherMenuGroup]
 
     let onInstall: () -> Void
-    let onUse: () -> Void
-    let onUninstall: () -> Void
+    let onSelectInstance: (DSHInstalledVersion) -> Void
+
+    /// 行内最多展示的实例 chip 数。
+    private let maxChips = 3
 
     var body: some View {
-        HStack(alignment: .center, spacing: LauncherSpace.md) {
+        HStack(alignment: .top, spacing: LauncherSpace.md) {
             icon
 
             VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
@@ -256,25 +409,243 @@ struct DSHVersionRowView: View {
                     if info.isPrerelease && tags.isEmpty {
                         LauncherBadge("预发布", tone: .warning)
                     }
-                    if isSelected {
-                        LauncherBadge("使用中", tone: .accent)
-                    } else if isInstalled {
-                        LauncherBadge("已安装", tone: .success)
+                    if !instances.isEmpty {
+                        LauncherBadge("已安装 \(instances.count) 个实例", tone: .success)
                     }
                     Spacer(minLength: 0)
                 }
-                HStack(spacing: LauncherSpace.xs) {
-                    Text(subtitle)
-                        .textStyle(.micro, tone: .tertiary)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
+
+                Text(subtitle)
+                    .textStyle(.micro, tone: .tertiary)
+                    .lineLimit(1)
+
+                if !instances.isEmpty {
+                    instanceChips
                 }
             }
 
             trailing
         }
         .padding(.horizontal, LauncherSpace.md)
-        .frame(minHeight: LauncherControl.large + LauncherSpace.xs)
+        .padding(.vertical, LauncherSpace.xs)
+        .frame(minHeight: LauncherControl.large + LauncherSpace.xl)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
+                .fill(hasSelectedInstance ? theme.colors.accentSoft : theme.colors.surfaceSubtle)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
+                .strokeBorder(
+                    hasSelectedInstance ? theme.colors.accent.opacity(0.3) : theme.colors.stroke,
+                    lineWidth: 1
+                )
+        }
+    }
+
+    // MARK: 内部
+
+    private var hasSelectedInstance: Bool {
+        guard let selectedInstanceID else { return false }
+        return instances.contains { $0.id == selectedInstanceID }
+    }
+
+    private var subtitle: String {
+        var parts: [String] = ["发布于 \(DSHDownloadFormat.date(info.publishedAt))"]
+        if let size = info.unpackedSize, size > 0 {
+            parts.append("解包 \(DSHDownloadFormat.size(size))")
+        }
+        if instances.isEmpty {
+            parts.append("尚未安装实例")
+        } else {
+            parts.append(DSHVersionStore.defaultName(for: info.version))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var instanceChips: some View {
+        HStack(spacing: LauncherSpace.xxs) {
+            Text("实例")
+                .textStyle(.micro, tone: .tertiary)
+            ForEach(DSHDownloadList.visible(instances, limit: maxChips)) { instance in
+                LauncherChip(
+                    chipTitle(instance),
+                    isSelected: instance.id == selectedInstanceID,
+                    systemImage: chipIcon(instance)
+                ) {
+                    onSelectInstance(instance)
+                }
+            }
+            if instances.count > maxChips {
+                Text("+\(instances.count - maxChips)")
+                    .textStyle(.micro, tone: .tertiary)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func chipTitle(_ instance: DSHInstalledVersion) -> String {
+        instance.id == runningInstanceID ? "\(instance.name) · 运行中" : instance.name
+    }
+
+    private func chipIcon(_ instance: DSHInstalledVersion) -> String? {
+        if instance.id == runningInstanceID { return "play.circle.fill" }
+        if instance.isPack { return "shippingbox" }
+        return nil
+    }
+
+    private var icon: some View {
+        Image(systemName: info.isPrerelease ? "flask.fill" : "shippingbox.fill")
+            .textStyle(.caption, tone: instances.isEmpty ? .secondary : .accent)
+            .frame(width: LauncherControl.small, height: LauncherControl.small)
+            .background {
+                RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
+                    .fill(theme.colors.surfaceHover)
+            }
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private var trailing: some View {
+        HStack(spacing: LauncherSpace.xs) {
+            if isInstalling {
+                HStack(spacing: LauncherSpace.xs) {
+                    LauncherSpinner(size: 14)
+                    Text("安装中")
+                        .textStyle(.micro, tone: .secondary)
+                }
+            } else {
+                LauncherButton(
+                    instances.isEmpty ? "安装" : "再装一个",
+                    systemImage: "arrow.down.circle",
+                    variant: instances.isEmpty ? .primary : .secondary,
+                    size: .small,
+                    isDisabled: isBusy || isReadOnly || !canInstall
+                ) {
+                    onInstall()
+                }
+                .launcherTooltip(
+                    isReadOnly
+                        ? "快照模式不执行安装"
+                        : (isBusy
+                            ? "已有安装任务在进行"
+                            : (canInstall ? "安装 DSH \(info.version)（可自定义实例名，可重复安装）" : (installDisabledReason ?? "当前环境不可安装")))
+                )
+            }
+
+            if !menuGroups.isEmpty {
+                LauncherIconMenu(
+                    groups: menuGroups,
+                    accessibilityLabel: "\(info.version) 的实例操作"
+                )
+                .launcherTooltip("实例操作：设为当前 / 卸载 / 导出整合包")
+            }
+        }
+    }
+
+    private func tagTone(_ tag: String) -> LauncherBadgeTone {
+        switch tag.lowercased() {
+        case "latest": return .accent
+        case "next": return .info
+        case "alpha", "beta", "rc": return .warning
+        default: return .neutral
+        }
+    }
+}
+
+// MARK: - 整合包实例行
+
+/// 本地整合包实例的一行：名字 / DSH 版本 / 包信息 / 大小 + 设为当前 / 导出 / 卸载 / Finder。
+struct DSHPackInstanceRowView: View {
+    @Environment(\.launcherTheme) private var theme
+
+    let instance: DSHInstalledVersion
+    let isSelected: Bool
+    let isRunning: Bool
+    let isBusy: Bool
+    let isReadOnly: Bool
+    let exportMenuGroups: [LauncherMenuGroup]
+
+    let onSelect: () -> Void
+    let onUninstall: () -> Void
+    let onReveal: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: LauncherSpace.md) {
+            Image(systemName: "shippingbox.fill")
+                .textStyle(.caption, tone: isSelected ? .accent : .secondary)
+                .frame(width: LauncherControl.small, height: LauncherControl.small)
+                .background {
+                    RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
+                        .fill(theme.colors.surfaceHover)
+                }
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
+                HStack(spacing: LauncherSpace.xs) {
+                    Text(instance.name)
+                        .textStyle(.bodyStrong)
+                        .lineLimit(1)
+                    LauncherBadge("整合包", tone: .info)
+                    if isSelected {
+                        LauncherBadge("使用中", tone: .accent)
+                    }
+                    if isRunning {
+                        LauncherBadge("运行中", tone: .accent)
+                    }
+                    Spacer(minLength: 0)
+                }
+                Text(DSHDownloadPackUI.packSubtitle(instance))
+                    .textStyle(.micro, tone: .tertiary)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: LauncherSpace.xs) {
+                if !isSelected {
+                    LauncherButton(
+                        "设为当前",
+                        systemImage: "checkmark.circle",
+                        variant: .secondary,
+                        size: .small,
+                        isDisabled: isBusy || isReadOnly
+                    ) {
+                        onSelect()
+                    }
+                    .launcherTooltip(isReadOnly ? "快照模式不切换实例" : "把该整合包实例设为当前实例")
+                }
+                if !exportMenuGroups.isEmpty {
+                    LauncherIconMenu(
+                        groups: exportMenuGroups,
+                        systemImage: "square.and.arrow.up",
+                        accessibilityLabel: "导出该整合包实例"
+                    )
+                    .launcherTooltip("导出为 .dshpack（完整包 / 轻量包）")
+                }
+                LauncherIconButton(
+                    systemImage: "folder",
+                    variant: .ghost,
+                    size: .small,
+                    accessibilityLabel: "在访达中显示 \(instance.name)",
+                    isDisabled: isReadOnly
+                ) {
+                    onReveal()
+                }
+                .launcherTooltip(isReadOnly ? "快照模式不打开目录" : "在访达中显示该实例目录")
+                LauncherIconButton(
+                    systemImage: "trash",
+                    variant: .ghost,
+                    size: .small,
+                    accessibilityLabel: "卸载整合包实例 \(instance.name)",
+                    isDisabled: isBusy || isReadOnly
+                ) {
+                    onUninstall()
+                }
+                .launcherTooltip(isReadOnly ? "快照模式不执行卸载" : "卸载该实例（只删除实例目录与日志，凭据仍复用 ~/.dsh）")
+            }
+        }
+        .padding(.horizontal, LauncherSpace.md)
+        .padding(.vertical, LauncherSpace.xs)
+        .frame(minHeight: LauncherControl.large + LauncherSpace.md)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             RoundedRectangle(cornerRadius: LauncherRadius.md, style: .continuous)
@@ -286,100 +657,6 @@ struct DSHVersionRowView: View {
                     isSelected ? theme.colors.accent.opacity(0.3) : theme.colors.stroke,
                     lineWidth: 1
                 )
-        }
-    }
-
-    // MARK: 内部
-
-    private var subtitle: String {
-        var parts: [String] = ["发布于 \(DSHDownloadFormat.date(info.publishedAt))"]
-        if let size = info.unpackedSize, size > 0 {
-            parts.append("解包 \(DSHDownloadFormat.size(size))")
-        }
-        if let installedAt {
-            parts.append("安装于 \(DSHDownloadFormat.date(installedAt))")
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    private var icon: some View {
-        Image(systemName: info.isPrerelease ? "flask.fill" : "shippingbox.fill")
-            .textStyle(.caption, tone: isInstalled ? .accent : .secondary)
-            .frame(width: LauncherControl.small, height: LauncherControl.small)
-            .background {
-                RoundedRectangle(cornerRadius: LauncherRadius.sm, style: .continuous)
-                    .fill(theme.colors.surfaceHover)
-            }
-            .accessibilityHidden(true)
-    }
-
-    @ViewBuilder
-    private var trailing: some View {
-        if isInstalling {
-            HStack(spacing: LauncherSpace.xs) {
-                LauncherSpinner(size: 14)
-                Text("安装中")
-                    .textStyle(.micro, tone: .secondary)
-            }
-        } else if isInstalled {
-            HStack(spacing: LauncherSpace.xs) {
-                if !isSelected {
-                    LauncherButton(
-                        "使用",
-                        systemImage: "checkmark.circle",
-                        variant: .secondary,
-                        size: .small,
-                        isDisabled: isBusy || isReadOnly
-                    ) {
-                        onUse()
-                    }
-                    .launcherTooltip(
-                        isReadOnly
-                            ? "快照模式不切换版本"
-                            : "把这个版本设为当前版本（插件安装到它的 web profile）"
-                    )
-                }
-                LauncherIconButton(
-                    systemImage: "trash",
-                    variant: .ghost,
-                    size: .small,
-                    accessibilityLabel: "卸载 DSH \(info.version)",
-                    isDisabled: isBusy || isReadOnly
-                ) {
-                    onUninstall()
-                }
-                .launcherTooltip(
-                    isReadOnly
-                        ? "快照模式不执行卸载"
-                        : (isBusy ? "安装任务进行中，暂时不能卸载" : "卸载该版本（只删除安装目录与日志，共享 DSH_HOME 保留）")
-                )
-            }
-        } else {
-            LauncherButton(
-                "安装",
-                systemImage: "arrow.down.circle",
-                variant: .primary,
-                size: .small,
-                isDisabled: isBusy || isReadOnly || !canInstall
-            ) {
-                onInstall()
-            }
-            .launcherTooltip(
-                isReadOnly
-                    ? "快照模式不执行安装"
-                    : (isBusy
-                        ? "已有安装任务在进行"
-                        : (canInstall ? "安装 DSH \(info.version) 到本地" : (installDisabledReason ?? "当前环境不可安装")))
-            )
-        }
-    }
-
-    private func tagTone(_ tag: String) -> LauncherBadgeTone {
-        switch tag.lowercased() {
-        case "latest": return .accent
-        case "next": return .info
-        case "alpha", "beta", "rc": return .warning
-        default: return .neutral
         }
     }
 }
@@ -482,7 +759,7 @@ struct DSHPluginCardView: View {
             ) {
                 onRemove()
             }
-            .launcherTooltip(isReadOnly ? "快照模式不执行卸载" : "从 launcher 共享 web profile 卸载该插件")
+            .launcherTooltip(isReadOnly ? "快照模式不执行卸载" : "从当前实例的 web profile 卸载该插件")
         } else {
             LauncherButton(
                 "安装",
@@ -494,7 +771,7 @@ struct DSHPluginCardView: View {
                 onInstall()
             }
             .launcherTooltip(
-                isReadOnly ? "快照模式不执行安装" : (installDisabledReason ?? "安装到 launcher 共享 web profile")
+                isReadOnly ? "快照模式不执行安装" : (installDisabledReason ?? "安装到当前实例的 web profile")
             )
         }
     }
@@ -567,7 +844,7 @@ struct DSHPluginCardView: View {
                     onOpen()
                 }
                 LauncherButton(
-                    isInstalled ? "卸载插件" : "安装到共享 profile",
+                    isInstalled ? "卸载插件" : "安装到当前实例",
                     systemImage: isInstalled ? "trash" : "arrow.down.circle",
                     variant: isInstalled ? .ghost : .secondary,
                     size: .small,
@@ -584,7 +861,7 @@ struct DSHPluginCardView: View {
                         ? "快照模式不执行插件操作"
                         : (isBusy
                             ? "插件操作进行中"
-                            : (isInstalled ? "从共享 web profile 卸载" : (installDisabledReason ?? "安装到 launcher 共享 web profile")))
+                            : (isInstalled ? "从当前实例卸载" : (installDisabledReason ?? "安装到当前实例的 web profile")))
                 )
                 Spacer(minLength: 0)
             }
@@ -592,14 +869,16 @@ struct DSHPluginCardView: View {
     }
 }
 
-// MARK: - 安装进度卡
+// MARK: - 进度卡
 
-/// 安装 / 插件操作中的进度卡：阶段 + 不确定进度条 + 日志尾部 + 取消按钮。
+/// 安装 / 插件 / 整合包操作中的进度卡：阶段 + 进度条 + 日志尾部 + 取消按钮。
 struct DSHProgressCard: View {
     @Environment(\.launcherTheme) private var theme
 
     let title: String
     let phase: String
+    /// 进度（0...1）；nil 表示不确定进度（安装 / 插件命令）。
+    var progress: Double? = nil
     let logLines: [String]
     let onCancel: () -> Void
 
@@ -623,7 +902,7 @@ struct DSHProgressCard: View {
                     .launcherTooltip("终止当前命令并清理半成品")
                 }
 
-                LauncherProgressBar(value: nil, label: phase, height: 4)
+                LauncherProgressBar(value: progress, label: phase, height: 4)
 
                 if !logLines.isEmpty {
                     VStack(alignment: .leading, spacing: 0) {

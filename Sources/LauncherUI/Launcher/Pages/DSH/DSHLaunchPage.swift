@@ -1,20 +1,24 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - DSH 启动页
 
-/// DSH 启动页（与 Minecraft 启动页同构）：左侧「DSH 版本」列表，右侧启动 Web UI / 运行状态 / 实时日志 / 环境与插件。
-/// 全部交互走真实 `DSHVersionStore` / `DSHProcessController` / `DSHPluginStore`：
-/// 启动即真实拉起 `dsh --profile web --no-open --port …`，停止前二次确认，没有任何假 sleep / 假成功。
+/// DSH 启动页（与 Minecraft 启动页同构）：左侧「DSH 实例」列表，右侧当前实例 / 启动 Web UI / 运行状态 / 实时日志 / 环境与插件。
+/// 全部交互走真实 `DSHVersionStore` / `DSHProcessController` / `DSHPluginStore` / `DSHPackService`：
+/// 启动即真实拉起 `dsh --profile web --no-open --port …`，停止 / 卸载前二次确认，导出整合包走保存面板 + 真实 zip。
 public struct DSHLaunchPage: View {
     @Environment(\.launcherTheme) private var theme
     @Environment(DSHVersionStore.self) private var versions
     @Environment(DSHProcessController.self) private var dshProcess
     @Environment(DSHPluginStore.self) private var plugins
+    @Environment(DSHPackService.self) private var packs
     @Environment(LauncherRouter.self) private var router
     @Environment(\.launcherSnapshotMode) private var snapshotMode
 
     @State private var searchText = ""
+    /// 本页是否发起过导出（用于区分下载页的导入 / 导出失败状态）。
+    @State private var exportAttempted = false
 
     /// 实时日志视口高度：固定值保证 1080×720 下首屏不出现纵向滚动。
     private let logViewportHeight: CGFloat = LauncherSpace.xxxl * 2 + LauncherSpace.xl
@@ -28,6 +32,9 @@ public struct DSHLaunchPage: View {
             LauncherMainPanel {
                 mainHeader
                 launchCard
+                if isExporting || (isExportFailed && exportAttempted) {
+                    exportProgressCard
+                }
                 statusCard
                 logCard
                 environmentAndPluginRow
@@ -36,9 +43,13 @@ public struct DSHLaunchPage: View {
         .task { await prepare() }
         .onChange(of: dshProcess.state) { _, newState in
             guard !snapshotMode else { return }
+            let instanceName = DSHLaunchPresentation.runningInstance(
+                in: versions.installed,
+                activeInstanceID: dshProcess.activeInstanceID
+            )?.name
             switch newState {
             case .running:
-                router.showToast("DSH Web UI 已启动")
+                router.showToast("DSH Web UI 已启动\(instanceName.map { "：\($0)" } ?? "")")
             case .failed(let message):
                 router.showToast("DSH 启动失败：\(message)", tone: .danger)
             case .idle, .starting, .stopping:
@@ -49,8 +60,8 @@ public struct DSHLaunchPage: View {
 
     // MARK: - 生命周期
 
-    /// 首次进入：扫描已安装版本；交互模式下拉取 npm 版本目录（用于 latest 徽标）。
-    /// 离屏快照模式不联网、不启动进程，保证渲染结果确定。
+    /// 首次进入：扫描已安装实例；交互模式下拉取 npm 版本目录（用于 latest 徽标）。
+    /// 离屏快照模式不联网、不启动进程、不弹面板，保证渲染结果确定。
     private func prepare() async {
         versions.refreshInstalled()
         guard !snapshotMode else { return }
@@ -59,38 +70,38 @@ public struct DSHLaunchPage: View {
         }
     }
 
-    // MARK: - 左侧 DSH 版本面板
+    // MARK: - 左侧 DSH 实例面板
 
     private var sidePanel: some View {
         LauncherSidePanel(
-            title: "DSH 版本",
+            title: "DSH 实例",
             count: "\(versions.installed.count)",
             width: 300,
             searchText: $searchText,
-            searchPlaceholder: "搜索版本",
+            searchPlaceholder: "搜索实例或版本",
             toolbar: AnyView(sideToolbar),
             content: { sideContent },
             footer: { sideFooter }
         )
     }
 
-    /// 左面板工具栏：刷新已安装版本 / 去下载安装新版本。
+    /// 左面板工具栏：刷新已安装实例 / 去下载安装新实例。
     private var sideToolbar: some View {
         HStack(spacing: LauncherSpace.xxs) {
             LauncherIconButton(
                 systemImage: "arrow.clockwise",
                 variant: .ghost,
                 size: .small,
-                accessibilityLabel: "刷新已安装 DSH 版本",
+                accessibilityLabel: "刷新已安装 DSH 实例",
                 isDisabled: versions.isInstalling
             ) {
-                refreshInstalledVersions()
+                refreshInstalledInstances()
             }
             LauncherIconButton(
                 systemImage: "plus",
                 variant: .ghost,
                 size: .small,
-                accessibilityLabel: "安装新版本"
+                accessibilityLabel: "安装新实例"
             ) {
                 openDownload()
             }
@@ -102,43 +113,43 @@ public struct DSHLaunchPage: View {
         if versions.installed.isEmpty {
             LauncherEmptyState(
                 systemImage: "shippingbox",
-                title: "还没有 DSH 版本",
-                message: "去「下载」安装官方 @deepseek-ai/dsh 后即可启动 Web UI。",
+                title: "还没有 DSH 实例",
+                message: "去「下载」安装官方 @deepseek-ai/dsh，或导入 .dshpack 整合包后即可启动 Web UI。",
                 actionTitle: "去下载 DSH",
                 onAction: openDownload
             )
-        } else if filteredVersions.isEmpty {
+        } else if filteredInstances.isEmpty {
             LauncherEmptyState(
                 systemImage: "magnifyingglass",
-                title: "没有匹配的版本",
-                message: "换个关键词试试，当前已安装 \(versions.installed.count) 个版本。",
+                title: "没有匹配的实例",
+                message: "换个关键词试试，当前已安装 \(versions.installed.count) 个实例。",
                 actionTitle: "清除搜索",
                 onAction: { searchText = "" }
             )
         } else {
-            LauncherSidePanelGroup("已安装", trailing: "\(filteredVersions.count)")
-            ForEach(filteredVersions) { version in
-                versionRow(version)
+            LauncherSidePanelGroup("已安装", trailing: "\(filteredInstances.count)")
+            ForEach(filteredInstances) { instance in
+                instanceRow(instance)
             }
         }
     }
 
-    /// 单个已安装版本行：版本号 + 安装时间/体积 + latest / 运行中徽标。
-    private func versionRow(_ version: DSHInstalledVersion) -> some View {
-        let isRunning = dshProcess.isRunning && dshProcess.activeVersion == version.version
-        let isSelected = selectedVersion?.version == version.version
-        let isLatest = DSHLaunchPresentation.isLatest(version, latestVersion: latestVersionText)
+    /// 单个实例行：实例名 + `DSH <dshVersion>` + 运行中 / 整合包徽标。
+    private func instanceRow(_ instance: DSHInstalledVersion) -> some View {
+        let isRunning = DSHLaunchPresentation.isRunning(instance, activeInstanceID: dshProcess.activeInstanceID)
+        let isSelected = versions.selectedInstalledVersion?.id == instance.id
 
         return LauncherListRow(
-            title: "DSH \(version.version)",
-            subtitle: DSHLaunchPresentation.versionSubtitle(version),
-            systemImage: "shippingbox.fill",
-            badge: isRunning ? "运行中" : (isLatest ? "latest" : nil),
+            title: instance.name,
+            subtitle: DSHLaunchPresentation.listSubtitle(instance),
+            systemImage: instance.isPack ? "shippingbox.fill" : "cube.fill",
+            badge: DSHLaunchPresentation.instanceBadge(instance, isRunning: isRunning),
             accessory: AnyView(
                 HStack(spacing: LauncherSpace.xs) {
                     if isRunning {
                         LauncherStatusDot(tone: .success)
                     }
+                    LauncherIconMenu(groups: instanceMenu(instance), accessibilityLabel: "实例操作")
                     Image(systemName: "chevron.right")
                         .textStyle(.caption, tone: .tertiary)
                 }
@@ -146,45 +157,78 @@ public struct DSHLaunchPage: View {
             isSelected: isSelected,
             action: {
                 withAnimation(LauncherMotion.smooth) {
-                    versions.select(version.version)
+                    versions.select(instance.id)
                 }
             }
         )
-        .launcherContextMenu(versionMenu(version))
+        .launcherContextMenu(instanceMenu(instance))
     }
 
-    /// 版本右键菜单：设为当前 / 启动 / 打开目录 / 复制信息。
-    private func versionMenu(_ version: DSHInstalledVersion) -> [LauncherMenuGroup] {
+    /// 实例右键菜单：设为当前 / 启动 / 目录 / 复制 / 导出整合包 / 卸载。
+    private func instanceMenu(_ instance: DSHInstalledVersion) -> [LauncherMenuGroup] {
+        let isRunning = DSHLaunchPresentation.isRunning(instance, activeInstanceID: dshProcess.activeInstanceID)
         let processBlocked = dshProcess.isRunning || dshProcess.isBusy
+        let exportBlocked = DSHLaunchPresentation.exportDisabledReason(snapshotMode: snapshotMode, isBusy: packs.isBusy)
+        let uninstallBlocked = DSHLaunchPresentation.uninstallDisabledReason(
+            instance: instance,
+            activeInstanceID: dshProcess.activeInstanceID,
+            isBusy: dshProcess.isBusy,
+            isInstalling: versions.isInstalling
+        )
+
         return [
             LauncherMenuGroup(items: [
-                LauncherMenuItem("设为当前版本", systemImage: "checkmark.circle", action: {
-                    versions.select(version.version)
-                    router.showToast("已选择 DSH \(version.version)")
+                LauncherMenuItem("设为当前实例", systemImage: "checkmark.circle", action: {
+                    versions.select(instance.id)
+                    router.showToast("已选择实例「\(instance.name)」")
                 }),
                 LauncherMenuItem(
-                    "启动此版本 Web UI",
+                    "启动此实例 Web UI",
                     systemImage: "play.fill",
                     detail: processBlocked ? "DSH 正在运行 / 处理中，请先停止" : nil,
                     isDisabled: processBlocked,
-                    action: { start(version) }
+                    action: { start(instance) }
                 ),
-                LauncherMenuItem("在访达中显示版本目录", systemImage: "folder", action: {
-                    InstanceActions.reveal(URL(fileURLWithPath: version.path))
+                LauncherMenuItem("在 Finder 中显示实例目录", systemImage: "folder", action: {
+                    InstanceActions.reveal(URL(fileURLWithPath: instance.path))
                 }),
-                LauncherMenuItem("复制版本号", systemImage: "doc.on.doc", action: {
-                    InstanceActions.copy(version.version)
-                    router.showToast("已复制版本号")
+                LauncherMenuItem("打开实例 DSH_HOME", systemImage: "house", action: {
+                    openHomeDirectory(for: instance)
                 }),
-                LauncherMenuItem("复制 DSH_HOME 路径", systemImage: "doc.on.doc", action: {
-                    InstanceActions.copy(versions.paths.homeDirectory(for: version.version).path)
-                    router.showToast("已复制 DSH_HOME 路径")
+                LauncherMenuItem("复制实例名", systemImage: "doc.on.doc", action: {
+                    InstanceActions.copy(instance.name)
+                    router.showToast("已复制实例名")
                 })
+            ]),
+            LauncherMenuGroup(title: "整合包", items: [
+                LauncherMenuItem(
+                    DSHLaunchPresentation.exportMenuTitle(runtime: .bundled),
+                    systemImage: "shippingbox.and.arrow.backward",
+                    detail: exportBlocked,
+                    isDisabled: exportBlocked != nil,
+                    action: { chooseExport(instance: instance, runtime: .bundled) }
+                ),
+                LauncherMenuItem(
+                    DSHLaunchPresentation.exportMenuTitle(runtime: .online),
+                    systemImage: "shippingbox",
+                    detail: exportBlocked,
+                    isDisabled: exportBlocked != nil,
+                    action: { chooseExport(instance: instance, runtime: .online) }
+                )
+            ]),
+            LauncherMenuGroup(items: [
+                LauncherMenuItem(
+                    isRunning ? "卸载实例…（请先停止）" : "卸载实例…",
+                    systemImage: "trash",
+                    tone: .danger,
+                    isDisabled: uninstallBlocked != nil,
+                    action: { confirmUninstall(instance) }
+                )
             ])
         ]
     }
 
-    /// 左面板底部：当前选中版本 + 真实环境摘要。
+    /// 左面板底部：当前选中实例 + 真实环境摘要。
     private var sideFooter: some View {
         VStack(alignment: .leading, spacing: LauncherSpace.xs) {
             Rectangle()
@@ -192,10 +236,11 @@ public struct DSHLaunchPage: View {
                 .frame(height: 1)
 
             HStack(spacing: LauncherSpace.xs) {
-                LauncherLabel("当前版本")
+                LauncherLabel("当前实例")
                 Spacer(minLength: LauncherSpace.xs)
-                if let version = selectedVersion {
-                    LauncherMonoText("DSH \(version.version)", tone: .primary)
+                if let instance = selectedInstance {
+                    LauncherMonoText(instance.name, tone: .primary)
+                        .lineLimit(1)
                 } else {
                     Text("未选择")
                         .textStyle(.micro, tone: .tertiary)
@@ -228,7 +273,7 @@ public struct DSHLaunchPage: View {
                     systemImage: "folder",
                     variant: .ghost,
                     size: .small,
-                    accessibilityLabel: "打开 DSH 目录"
+                    accessibilityLabel: "打开 DSH 数据目录"
                 ) {
                     openDSHRoot()
                 }
@@ -236,31 +281,31 @@ public struct DSHLaunchPage: View {
         }
     }
 
-    /// 页头副标题：当前版本 / 未选择版本（运行版本与选中不一致时标注）。
+    /// 页头副标题：当前实例名 + DSH 版本 + 整合包 / 运行中标注。
     private var headerSubtitle: String {
-        guard let version = selectedVersion else {
-            return "未选择版本 · 先在左侧安装或选择 DSH 版本"
+        guard let instance = displayInstance else {
+            return "未选择实例 · 先在左侧安装或选择 DSH 实例"
         }
-        var parts = ["DSH \(version.version)"]
-        if DSHLaunchPresentation.isLatest(version, latestVersion: latestVersionText) {
-            parts.append("最新版本")
-        }
-        if dshProcess.isRunning, let active = dshProcess.activeVersion, active != version.version {
-            parts.append("运行中 \(active)")
+        var parts = [instance.name, "DSH \(instance.dshVersion)"]
+        if instance.isPack { parts.append("整合包") }
+        if DSHLaunchPresentation.isRunning(instance, activeInstanceID: dshProcess.activeInstanceID) {
+            parts.append("运行中")
+        } else if let running = DSHLaunchPresentation.runningInstance(in: versions.installed, activeInstanceID: dshProcess.activeInstanceID) {
+            parts.append("运行中：\(running.name)")
         }
         return parts.joined(separator: " · ")
     }
 
-    // MARK: - 启动卡片
+    // MARK: - 当前实例启动卡
 
-    /// 启动卡：当前版本、端口、Node 状态 + 启动 / 打开 / 复制地址 / 停止。
+    /// 当前实例卡：实例名、DSH 版本 + 安装时间/体积、整合包来源、端口、Node 状态 + 启动 / 打开 / 复制地址 / 停止。
     private var launchCard: some View {
         LauncherCard(level: .regular, padding: LauncherSpace.md) {
-            VStack(alignment: .leading, spacing: LauncherSpace.sm) {
-                HStack(alignment: .center, spacing: LauncherSpace.md) {
+            VStack(alignment: .leading, spacing: LauncherSpace.xs) {
+                HStack(alignment: .top, spacing: LauncherSpace.md) {
                     VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
                         HStack(spacing: LauncherSpace.sm) {
-                            Text(selectedVersion.map { "DSH \($0.version)" } ?? "未选择 DSH 版本")
+                            Text(displayInstance?.name ?? "未选择 DSH 实例")
                                 .textStyle(.title)
                                 .lineLimit(1)
                                 .minimumScaleFactor(0.8)
@@ -269,12 +314,30 @@ public struct DSHLaunchPage: View {
                                 tone: DSHLaunchPresentation.statusTone(dshProcess.state),
                                 systemImage: DSHLaunchPresentation.statusIcon(dshProcess.state)
                             )
+                            if displayInstance?.isPack == true {
+                                LauncherBadge("整合包", tone: .accent, systemImage: "shippingbox.fill")
+                            }
+                        }
+
+                        if let instance = displayInstance {
+                            Text(DSHLaunchPresentation.detailSubtitle(instance))
+                                .textStyle(.micro, tone: .tertiary)
+                                .lineLimit(1)
+                            if let packInfo = DSHLaunchPresentation.packInfoText(instance) {
+                                HStack(spacing: LauncherSpace.xs) {
+                                    Image(systemName: "shippingbox")
+                                        .textStyle(.micro, tone: .tertiary)
+                                    Text(packInfo)
+                                        .textStyle(.micro, tone: .secondary)
+                                        .lineLimit(1)
+                                }
+                            }
                         }
 
                         HStack(spacing: LauncherSpace.xs) {
                             LauncherBadge("端口 \(portText)", tone: .neutral, systemImage: "number")
-                            if let version = selectedVersion,
-                               DSHLaunchPresentation.isLatest(version, latestVersion: latestVersionText) {
+                            if let instance = displayInstance,
+                               DSHLaunchPresentation.isLatest(instance, latestVersion: latestVersionText) {
                                 LauncherBadge("latest", tone: .accent)
                             }
                             if environment.isPlaceholder {
@@ -325,7 +388,8 @@ public struct DSHLaunchPage: View {
                     .padding(.horizontal, LauncherSpace.sm)
                     .padding(.vertical, LauncherSpace.xs)
                     .glassBackground(level: .subtle, cornerRadius: LauncherRadius.sm)
-                } else if let reason = startDisabledReason,
+                } else if !snapshotMode,
+                          let reason = startDisabledReason,
                           !dshProcess.isRunning,
                           !dshProcess.isBusy,
                           !versions.isInstalling {
@@ -378,7 +442,7 @@ public struct DSHLaunchPage: View {
                 }
                 .launcherTooltip(startDisabledReason ?? "真实启动 dsh web 进程，并在默认浏览器打开带一次性 token 的地址")
 
-                if selectedVersion == nil {
+                if displayInstance == nil {
                     LauncherButton("去下载", systemImage: "arrow.down.circle", variant: .secondary, size: .medium) {
                         openDownload()
                     }
@@ -387,9 +451,70 @@ public struct DSHLaunchPage: View {
         }
     }
 
+    // MARK: - 整合包导出进度
+
+    /// 是否正在导出整合包。
+    private var isExporting: Bool {
+        if case .exporting = packs.state { return true }
+        return false
+    }
+
+    /// 导出失败态（仅本页发起导出后展示，避免误显示下载页的导入失败）。
+    private var isExportFailed: Bool {
+        if case .failed = packs.state { return true }
+        return false
+    }
+
+    /// 导出进度卡：阶段 + 进度条 + 最后一行日志 + 取消；失败时显示错误并允许关闭。
+    @ViewBuilder
+    private var exportProgressCard: some View {
+        LauncherCard(level: .regular, padding: LauncherSpace.md) {
+            VStack(alignment: .leading, spacing: LauncherSpace.xs) {
+                LauncherSectionHeader(
+                    title: isExportFailed ? "整合包导出失败" : "正在导出整合包",
+                    subtitle: exportProgressSubtitle,
+                    accessory: AnyView(
+                        HStack(spacing: LauncherSpace.xs) {
+                            if packs.isBusy {
+                                LauncherButton("取消", systemImage: "xmark", variant: .secondary, size: .small) {
+                                    packs.cancel()
+                                    router.showToast("已请求取消导出", tone: .warning)
+                                }
+                            } else {
+                                LauncherButton("关闭", systemImage: "xmark", variant: .ghost, size: .small) {
+                                    packs.reset()
+                                    exportAttempted = false
+                                }
+                            }
+                        }
+                    )
+                )
+
+                if case .exporting(_, _, let progress) = packs.state {
+                    LauncherProgressBar(
+                        value: progress,
+                        label: "\(Int((progress * 100).rounded()))%",
+                        tone: .accent,
+                        height: 4
+                    )
+                }
+
+                if let lastLine = packs.logLines.last {
+                    LauncherMonoText(lastLine, tone: .tertiary, size: 10)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+        }
+    }
+
+    private var exportProgressSubtitle: String {
+        DSHLaunchPresentation.exportPhaseText(packs.state) ?? "准备导出…"
+    }
+
     // MARK: - 运行状态卡片
 
-    /// 运行状态卡：运行中显示脱敏 URL / 端口 / 启动时间；未运行显示行为说明。
+    /// 运行状态卡：运行中显示实例 / 脱敏 URL / 端口 / 启动时间；未运行显示行为说明。
     private var statusCard: some View {
         LauncherCard(level: .regular, padding: LauncherSpace.md) {
             HStack(alignment: .center, spacing: LauncherSpace.md) {
@@ -399,9 +524,14 @@ public struct DSHLaunchPage: View {
                 )
 
                 VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
-                    Text(DSHLaunchPresentation.statusTitle(dshProcess.state))
-                        .textStyle(.bodyStrong)
-                        .lineLimit(1)
+                    HStack(spacing: LauncherSpace.xs) {
+                        Text(DSHLaunchPresentation.statusTitle(dshProcess.state))
+                            .textStyle(.bodyStrong)
+                            .lineLimit(1)
+                        if let runningName {
+                            LauncherBadge(runningName, tone: .neutral, systemImage: "play.circle.fill")
+                        }
+                    }
                     Text(DSHLaunchPresentation.statusDetail(dshProcess.state))
                         .textStyle(.micro, tone: .tertiary)
                         .lineLimit(1)
@@ -427,7 +557,7 @@ public struct DSHLaunchPage: View {
                         systemImage: "safari"
                     )
                     LauncherButton("刷新环境", systemImage: "arrow.clockwise", variant: .ghost, size: .small) {
-                        refreshInstalledVersions()
+                        refreshInstalledInstances()
                     }
                 }
             }
@@ -436,16 +566,26 @@ public struct DSHLaunchPage: View {
 
     // MARK: - 实时日志卡片
 
-    /// 实时日志卡：最后 12 行等宽输出，自动滚到底部；空态说明。
+    /// 实时日志卡：按 activeInstanceID 过滤的最后 12 行输出，自动滚到底部；空态说明。
     private var logCard: some View {
         LauncherCard(level: .regular, padding: LauncherSpace.sm) {
             VStack(alignment: .leading, spacing: LauncherSpace.xs) {
                 LauncherSectionHeader(
                     title: "实时日志",
-                    subtitle: "最后 12 行 · 共 \(dshProcess.logLines.count) 行 · dsh web 输出",
+                    subtitle: logCardSubtitle,
                     accessory: AnyView(
-                        LauncherButton("打开完整日志", systemImage: "text.alignleft", variant: .ghost, size: .small) {
-                            router.go(.more, moreSection: "logs")
+                        HStack(spacing: LauncherSpace.xs) {
+                            LauncherButton("打开完整日志", systemImage: "text.alignleft", variant: .ghost, size: .small) {
+                                openFullLog()
+                            }
+                            LauncherIconMenu(groups: [
+                                LauncherMenuGroup(items: [
+                                    LauncherMenuItem("在访达中显示日志文件", systemImage: "folder", action: openFullLog),
+                                    LauncherMenuItem("在更多页查看全部日志", systemImage: "arrow.up.right", action: {
+                                        router.go(.more, moreSection: "logs")
+                                    })
+                                ])
+                            ], accessibilityLabel: "日志操作")
                         }
                     )
                 )
@@ -470,6 +610,13 @@ public struct DSHLaunchPage: View {
                 }
             }
         }
+    }
+
+    private var logCardSubtitle: String {
+        if let runningName {
+            return "运行实例：\(runningName) · 最后 12 行 · 共 \(dshProcess.logLines.count) 行"
+        }
+        return "最后 12 行 · 共 \(dshProcess.logLines.count) 行 · dsh web 输出"
     }
 
     /// 日志本体：离屏模式静态取尾部；交互模式内部滚动并自动跟到底部。
@@ -536,7 +683,7 @@ public struct DSHLaunchPage: View {
         }
     }
 
-    /// 环境与路径卡：Node / 包管理器 / DSH_HOME + 在访达打开。
+    /// 环境与路径卡：Node / 包管理器 / 当前实例的 DSH_HOME + 在访达打开。
     private var environmentCard: some View {
         LauncherCard(level: .regular, padding: LauncherSpace.md) {
             VStack(alignment: .leading, spacing: LauncherSpace.xs) {
@@ -557,7 +704,7 @@ public struct DSHLaunchPage: View {
 
                 HStack(spacing: LauncherSpace.xs) {
                     LauncherLabel("DSH_HOME")
-                    LauncherBadge("所有版本共享", tone: .neutral)
+                    LauncherBadge("实例独立", tone: .neutral)
                     Spacer(minLength: LauncherSpace.xs)
                     LauncherButton("在访达中打开", systemImage: "folder", variant: .ghost, size: .small) {
                         openHomeDirectory()
@@ -574,7 +721,7 @@ public struct DSHLaunchPage: View {
                 HStack(alignment: .top, spacing: LauncherSpace.xs) {
                     Image(systemName: "key")
                         .textStyle(.micro, tone: .tertiary)
-                    Text("插件 / 会话保存在这里；自动复用 ~/.dsh 登录凭据，不会要求重新输入 API Key。")
+                    Text("每个实例独立的插件 / 会话；登录凭据自动复用 ~/.dsh，不会要求重新输入 API Key。")
                         .textStyle(.micro, tone: .tertiary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
@@ -593,13 +740,13 @@ public struct DSHLaunchPage: View {
         }
     }
 
-    /// 插件入口卡：当前版本已装插件数 + 管理入口。
+    /// 插件入口卡：当前实例的已装插件数 + 管理入口。
     private var pluginCard: some View {
         LauncherCard(level: .regular, padding: LauncherSpace.md) {
             VStack(alignment: .leading, spacing: LauncherSpace.xs) {
                 LauncherSectionHeader(
                     title: "插件",
-                    subtitle: "当前 DSH_HOME 的 web profile 插件",
+                    subtitle: "当前实例 web profile 的插件",
                     accessory: AnyView(
                         LauncherBadge("\(installedPlugins.count) 个已装", tone: installedPlugins.isEmpty ? .neutral : .success)
                     )
@@ -629,16 +776,26 @@ public struct DSHLaunchPage: View {
 
     // MARK: - 派生数据
 
-    /// 当前选中版本（设置里选中但已卸载时退回第一个已安装版本）。
-    private var selectedVersion: DSHInstalledVersion? {
-        versions.selectedInstalledVersion ?? versions.installed.first
+    /// 严格按 `settings.dshSelectedInstanceID` 选中的实例。
+    private var selectedInstance: DSHInstalledVersion? {
+        versions.selectedInstalledVersion
     }
 
-    private var filteredVersions: [DSHInstalledVersion] {
-        DSHLaunchPresentation.filteredVersions(versions.installed, query: searchText)
+    /// 右侧展示用实例：selection 为空（迁移/删除竞态）时退回第一个已安装实例。
+    private var displayInstance: DSHInstalledVersion? {
+        selectedInstance ?? versions.installed.first
     }
 
-    /// Node / 包管理器探测结果（缓存，避免每次重绘都启动登录 shell）。
+    private var filteredInstances: [DSHInstalledVersion] {
+        DSHLaunchPresentation.filteredInstances(versions.installed, query: searchText)
+    }
+
+    /// 正在运行的实例名（来自 activeInstanceID，而不是版本号比较）。
+    private var runningName: String? {
+        DSHLaunchPresentation.runningInstance(in: versions.installed, activeInstanceID: dshProcess.activeInstanceID)?.name
+    }
+
+    /// Node / 包管理器探测结果（缓存，避免每次重绘都启动登录 shell；快照模式不探测）。
     private var environment: DSHLaunchEnvironment {
         if snapshotMode { return .placeholder }
         return DSHLaunchEnvironmentCache.snapshot(paths: versions.paths)
@@ -657,52 +814,61 @@ public struct DSHLaunchPage: View {
     /// 启动按钮禁用原因；nil 表示可启动。
     private var startDisabledReason: String? {
         DSHLaunchPresentation.startDisabledReason(
-            hasSelection: selectedVersion != nil,
+            hasSelection: displayInstance != nil,
             hasNode: environment.hasNode,
             isInstalling: versions.isInstalling,
             isBusy: dshProcess.isBusy
         )
     }
 
-    /// launcher 管理的共享 DSH_HOME 路径（所有版本共用，与选中版本无关）。
+    /// 当前实例的 DSH_HOME 路径（每个实例独立；快照模式回退到字面路径）。
     private var homePathText: String {
-        if snapshotMode { return "~/Library/Application Support/BlockLauncher/DSH/home" }
-        return versions.paths.homeDirectory(for: selectedVersion?.version ?? "").path
+        if snapshotMode {
+            if let instance = displayInstance {
+                return "~/Library/Application Support/BlockLauncher/DSH/homes/\(instance.id)"
+            }
+            return "~/Library/Application Support/BlockLauncher/DSH/homes"
+        }
+        guard let instance = displayInstance else {
+            return versions.paths.homesDirectory.path
+        }
+        return versions.paths.homeDirectory(for: instance.id).path
     }
 
     private var installedPlugins: [DSHInstalledPlugin] {
-        guard let version = selectedVersion else { return [] }
-        return plugins.installedPlugins(for: version)
+        guard let instance = displayInstance else { return [] }
+        return plugins.installedPlugins(for: instance)
     }
 
     // MARK: - 真实操作
 
-    /// 启动选中版本：真实拉起 `dsh --profile web --no-open --port …`。
+    /// 启动当前展示实例：真实拉起 `dsh --profile web --no-open --port …`。
     private func startSelected() {
-        guard let version = selectedVersion else {
-            router.showToast("请先在左侧选择已安装的 DSH 版本", tone: .warning)
+        guard let instance = displayInstance else {
+            router.showToast("请先在左侧选择已安装的 DSH 实例", tone: .warning)
             return
         }
-        start(version)
+        start(instance)
     }
 
-    private func start(_ version: DSHInstalledVersion) {
+    private func start(_ instance: DSHInstalledVersion) {
         guard !dshProcess.isRunning, !dshProcess.isBusy else {
             router.showToast("DSH 正在运行或处理中，请先停止", tone: .warning)
             return
         }
-        versions.select(version.version)
+        versions.select(instance.id)
         Task {
-            await dshProcess.start(version: version)
+            await dshProcess.start(version: instance)
         }
     }
 
-    /// 停止前二次确认（会终止进程，属于破坏性操作）。
+    /// 停止前二次确认（带运行中实例名，会终止进程）。
     private func confirmStop() {
+        let name = runningName ?? "DSH Web UI"
         router.showDialog(
             LauncherDialogRequest(
                 title: "停止 DSH Web UI？",
-                message: "将终止当前 DSH Web UI 进程，正在进行的会话会中断。可以稍后重新启动。",
+                message: "将终止实例「\(name)」的 Web UI 进程，正在进行的会话会中断。可以稍后重新启动。",
                 confirmTitle: "停止进程",
                 isDestructive: true,
                 onConfirm: {
@@ -711,6 +877,98 @@ public struct DSHLaunchPage: View {
             )
         )
     }
+
+    /// 卸载实例前二次确认（删除实例目录与独立 DSH_HOME，不动 ~/.dsh 登录凭据）。
+    private func confirmUninstall(_ instance: DSHInstalledVersion) {
+        if let reason = DSHLaunchPresentation.uninstallDisabledReason(
+            instance: instance,
+            activeInstanceID: dshProcess.activeInstanceID,
+            isBusy: dshProcess.isBusy,
+            isInstalling: versions.isInstalling
+        ) {
+            router.showToast(reason, tone: .warning)
+            return
+        }
+        router.showDialog(
+            LauncherDialogRequest(
+                title: "卸载 DSH 实例？",
+                message: "将删除实例「\(instance.name)」的版本目录与独立 DSH_HOME（DSH 本体 / 插件 / 会话）。~/.dsh 里的登录凭据不会被删除。",
+                confirmTitle: "卸载实例",
+                isDestructive: true,
+                onConfirm: {
+                    if versions.uninstall(instance.id) {
+                        router.showToast("已卸载实例「\(instance.name)」")
+                    } else {
+                        router.showToast("卸载失败：\(versions.lastError?.localizedDescription ?? "未知错误")", tone: .danger)
+                    }
+                }
+            )
+        )
+    }
+
+    // MARK: 整合包导出
+
+    /// 选择保存位置后真实导出（快照模式不弹面板）。
+    private func chooseExport(instance: DSHInstalledVersion, runtime: DSHPackRuntimeMode) {
+        if let reason = DSHLaunchPresentation.exportDisabledReason(snapshotMode: snapshotMode, isBusy: packs.isBusy) {
+            router.showToast(reason, tone: .info)
+            return
+        }
+        if dshProcess.isRunning, dshProcess.activeInstanceID == instance.id {
+            router.showToast("实例「\(instance.name)」正在运行，请先停止再导出整合包", tone: .warning)
+            return
+        }
+        let panel = NSSavePanel()
+        panel.title = "导出 DSH 整合包"
+        panel.message = runtime.title
+        panel.nameFieldStringValue = DSHLaunchPresentation.exportFileName(instanceName: instance.name)
+        panel.canCreateDirectories = true
+        if let contentType = UTType(filenameExtension: DSHPackFormat.fileExtension) {
+            panel.allowedContentTypes = [contentType]
+        }
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        Task { await performExport(instance: instance, runtime: runtime, destination: destination) }
+    }
+
+    /// 调用 `DSHPackService.exportPack`，成功 toast 路径，失败保留错误卡。
+    private func performExport(instance: DSHInstalledVersion, runtime: DSHPackRuntimeMode, destination: URL) async {
+        exportAttempted = true
+        let exported = await packs.exportPack(
+            instance: instance,
+            name: DSHLaunchPresentation.exportPackName(instance: instance),
+            version: DSHLaunchPresentation.exportPackVersion(instance: instance),
+            description: "由 LauncherALL 从实例「\(instance.name)」导出（DSH \(instance.dshVersion)）",
+            author: "",
+            runtime: runtime,
+            includePluginPayloads: true,
+            to: destination
+        )
+        if let exported {
+            exportAttempted = false
+            router.showToast("整合包已导出：\(exported.path)")
+        } else {
+            let message = packs.lastError?.localizedDescription ?? "导出失败"
+            router.showToast(message, tone: .danger)
+        }
+    }
+
+    // MARK: 日志
+
+    /// 打开完整日志：使用 `dshProcess.logFileURL(instanceID:)`（运行中实例优先，其次当前实例）。
+    private func openFullLog() {
+        guard let instanceID = dshProcess.activeInstanceID ?? displayInstance?.id else {
+            router.showToast("还没有实例日志：先在左侧选择实例并启动一次", tone: .info)
+            return
+        }
+        let url = dshProcess.logFileURL(instanceID: instanceID)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            router.showToast("日志文件还不存在：\(url.lastPathComponent)", tone: .info)
+            return
+        }
+        InstanceActions.reveal(url)
+    }
+
+    // MARK: 目录 / 浏览器
 
     /// 用默认浏览器打开带一次性 token 的启动地址。
     private func openWebUI() {
@@ -740,14 +998,15 @@ public struct DSHLaunchPage: View {
         router.showToast("启动地址已复制（含一次性 token）")
     }
 
-    /// 刷新已安装版本 + 清空环境探测缓存。
-    private func refreshInstalledVersions() {
+    /// 刷新已安装实例 + 清空环境探测缓存。
+    private func refreshInstalledInstances() {
         DSHLaunchEnvironmentCache.reset()
         versions.refreshInstalled()
-        router.showToast("已刷新 DSH 版本（\(versions.installed.count) 个）")
+        let packCount = versions.installed.filter(\.isPack).count
+        router.showToast("已刷新 DSH 实例：\(versions.installed.count) 个（整合包 \(packCount) 个）")
     }
 
-    /// 打开 DSH 根目录。
+    /// 打开 DSH 数据根目录。
     private func openDSHRoot() {
         try? versions.paths.ensureDirectories()
         if !InstanceActions.open(versions.paths.root) {
@@ -755,12 +1014,24 @@ public struct DSHLaunchPage: View {
         }
     }
 
-    /// 打开 launcher 共享 DSH_HOME（`DSH/home`，所有版本共用）。
-    /// 目录由启动流程创建并软链 `~/.dsh` 登录凭据；启动页只读访问，不创建、不删除。
+    /// 打开当前实例的独立 DSH_HOME（只读访问：不创建、不删除；缺失时给出说明）。
     private func openHomeDirectory() {
-        let home = versions.paths.homeDirectory(for: selectedVersion?.version ?? "")
+        guard let instance = displayInstance else {
+            let homes = versions.paths.homesDirectory
+            try? FileManager.default.createDirectory(at: homes, withIntermediateDirectories: true)
+            if !InstanceActions.open(homes) {
+                router.showToast("无法打开 DSH homes 目录", tone: .danger)
+            }
+            return
+        }
+        openHomeDirectory(for: instance)
+    }
+
+    /// 打开指定实例的 DSH_HOME（不创建目录）。
+    private func openHomeDirectory(for instance: DSHInstalledVersion) {
+        let home = versions.paths.homeDirectory(for: instance.id)
         guard FileManager.default.fileExists(atPath: home.path) else {
-            router.showToast("DSH_HOME 尚未创建（首次启动 DSH 会自动创建并复用登录凭据）：\(home.path)", tone: .info)
+            router.showToast("实例 DSH_HOME 尚未创建（首次启动会自动创建并复用登录凭据）：\(home.path)", tone: .info)
             return
         }
         if !InstanceActions.open(home) {
@@ -768,11 +1039,11 @@ public struct DSHLaunchPage: View {
         }
     }
 
-    /// 去下载页安装 DSH 版本（带一次性动作，供下载页识别）。
+    /// 去下载页安装 DSH 实例 / 导入整合包（带一次性动作，供下载页识别）。
     private func openDownload() {
         router.pendingDownloadAction = "dsh-versions"
         router.go(.download)
-        router.showToast("已切到下载页：请选择「DSH 版本」分类安装", tone: .info)
+        router.showToast("已切到下载页：可安装 DSH 版本或导入整合包", tone: .info)
     }
 
     /// 去下载页管理 DSH 插件（带一次性动作，供下载页识别）。

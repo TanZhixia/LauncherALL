@@ -5,8 +5,8 @@ import AppKit
 
 /// DSH 启动器的设置页：左侧分类 + 右侧卡片，全部读写真实设置 / 真实文件 / 真实网络。
 ///
-/// 分类：启动（端口 / 自动打开浏览器 / 默认版本）、下载与插件（npm 源 / 插件加载源 / 缓存）、
-/// 环境与目录（Node / pnpm / npm 检测与数据目录）、关于（版本与危险区）。
+/// 分类：启动（端口 / 自动打开浏览器 / 默认实例）、下载与插件（npm 源 / 插件加载源 / 缓存）、
+/// 环境与目录（运行时检测 / 实例 DSH_HOME / 实例数据目录）、关于（版本与危险区）。
 public struct DSHSettingsPage: View {
     @Environment(\.launcherTheme) private var theme
     @Environment(LauncherRouter.self) private var router
@@ -31,6 +31,8 @@ public struct DSHSettingsPage: View {
     @State private var environment: DSHRuntimeEnvironment?
     /// 运行时检测中
     @State private var isDetectingEnvironment = false
+    /// 数据目录统计（真实大小，交互模式后台计算）
+    @State private var directoryRows: [DSHDataDirectory] = []
 
     /// 创建设置页。
     public init() {}
@@ -56,7 +58,10 @@ public struct DSHSettingsPage: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        .task { await detectEnvironmentIfNeeded() }
+        .task {
+            await detectEnvironmentIfNeeded()
+            await loadDirectoriesIfNeeded()
+        }
     }
 
     // MARK: - 左侧分类面板
@@ -101,7 +106,7 @@ public struct DSHSettingsPage: View {
             if plugins.catalogState.isLoading { return "加载中" }
             return plugins.catalog == nil ? nil : "\(plugins.pluginCount)"
         case .environment:
-            return versions.installed.isEmpty ? nil : "\(versions.installed.count)"
+            return versions.installed.isEmpty ? nil : "\(versions.installed.count) 实例"
         case .about:
             return nil
         }
@@ -160,9 +165,9 @@ public struct DSHSettingsPage: View {
             case .failed: return "加载失败"
             }
         case .environment:
-            return versions.installed.isEmpty ? "未安装版本" : "\(versions.installed.count) 个版本"
+            return DSHFormatting.instanceCountText(versions.installed)
         case .about:
-            return versions.settings.dshSelectedVersion.isEmpty ? "未选择版本" : nil
+            return versions.settings.dshSelectedInstanceID.isEmpty ? "未选择实例" : nil
         }
     }
 
@@ -243,14 +248,14 @@ public struct DSHSettingsPage: View {
             )
 
             LauncherSettingRow(
-                "默认版本",
-                subtitle: selectedVersionSubtitle,
-                tooltip: "启动 DSH 启动器时默认使用这个版本",
+                "默认实例",
+                subtitle: selectedInstanceSubtitle,
+                tooltip: "启动 DSH 启动器时默认使用这个实例；同一 DSH 版本可以安装成多个实例",
                 showsDivider: false
             ) {
                 if versions.installed.isEmpty {
                     HStack(spacing: LauncherSpace.sm) {
-                        LauncherBadge("未安装", tone: .warning)
+                        LauncherBadge("未安装实例", tone: .warning)
                         LauncherButton(
                             "去下载",
                             systemImage: "arrow.down.circle",
@@ -263,11 +268,11 @@ public struct DSHSettingsPage: View {
                     }
                 } else {
                     LauncherMenuButton(
-                        versions.selectedInstalledVersion?.version ?? "未选择",
+                        versions.selectedInstalledVersion?.name ?? "未选择",
                         systemImage: "chevron.down",
                         variant: .secondary,
                         size: .small,
-                        groups: versionMenuGroups
+                        groups: instanceMenuGroups
                     )
                 }
             }
@@ -304,31 +309,31 @@ public struct DSHSettingsPage: View {
         return nil
     }
 
-    /// 已选版本的说明。
-    private var selectedVersionSubtitle: String {
+    /// 已选实例的说明。
+    private var selectedInstanceSubtitle: String {
         guard let selected = versions.selectedInstalledVersion else {
             return versions.installed.isEmpty
-                ? "还没有安装 DSH 版本，先去「下载」页安装"
-                : "选择一个已安装版本作为默认启动版本"
+                ? "还没有安装实例，先去「下载」页安装或导入整合包"
+                : "选择一个实例作为默认启动实例"
         }
         let installedAt = "安装于 \(DSHFormatting.dateTime(selected.installedAt))"
         let size = selected.sizeBytes.map { DSHFormatting.byteCount($0) } ?? "大小未知"
-        return "\(selected.version) · \(size) · \(installedAt)"
+        return "\(DSHFormatting.instanceDetail(selected)) · \(size) · \(installedAt)"
     }
 
-    /// 版本菜单：已安装版本列表（当前项带勾）。
-    private var versionMenuGroups: [LauncherMenuGroup] {
-        [LauncherMenuGroup(title: "已安装版本", items: versions.installed.map { version in
+    /// 实例菜单：所有已安装实例（同一版本可多实例，按 id 选择，当前项带勾）。
+    private var instanceMenuGroups: [LauncherMenuGroup] {
+        [LauncherMenuGroup(title: "已安装实例", items: versions.installed.map { instance in
             LauncherMenuItem(
-                version.version,
-                id: version.version,
-                systemImage: versions.settings.dshSelectedVersion == version.version
+                instance.name,
+                id: instance.id,
+                systemImage: versions.settings.dshSelectedInstanceID == instance.id
                     ? "checkmark"
-                    : "shippingbox",
-                detail: version.sizeBytes.map { DSHFormatting.byteCount($0) } ?? "大小未知"
+                    : (instance.isPack ? "shippingbox.fill" : "shippingbox"),
+                detail: DSHFormatting.instanceDetail(instance)
             ) {
-                versions.select(version.version)
-                router.showToast("默认版本已设为 \(version.version)")
+                versions.select(instance.id)
+                router.showToast("默认实例已设为 \(instance.name)")
             }
         })]
     }
@@ -690,45 +695,78 @@ public struct DSHSettingsPage: View {
                 }
             }
 
-            LauncherExpander(
-                "运行时详情",
-                subtitle: "Node / pnpm / npm 的真实路径与包管理器选择",
-                systemImage: "terminal"
-            ) {
-                VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
-                    Text(environmentDetailText)
-                        .textStyle(.micro, tone: .tertiary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    ForEach(environment?.rows ?? []) { row in
-                        DSHInfoRow(title: row.title, value: row.value, isMissing: row.isMissing)
-                    }
-                }
-                .padding(.top, LauncherSpace.xs)
+            // 运行时详情：紧凑内联行（1080×720 下不展开折叠区也能看全）
+            VStack(alignment: .leading, spacing: LauncherSpace.xxs) {
+                DSHInfoRow(
+                    title: "Node.js",
+                    value: environment?.node ?? (snapshotMode ? "快照模式未检测" : "未检测"),
+                    isMissing: environment != nil && environment?.node == nil,
+                    systemImage: "terminal"
+                )
+                DSHInfoRow(
+                    title: "包管理器",
+                    value: environment?.packageManager ?? (snapshotMode ? "快照模式未检测" : "未检测"),
+                    isMissing: environment != nil && environment?.packageManager == nil,
+                    systemImage: "shippingbox"
+                )
+                DSHInfoRow(
+                    title: "登录凭据",
+                    value: "复用 ~/.dsh/.credentials.yaml",
+                    systemImage: "key"
+                )
             }
+            .padding(.vertical, LauncherSpace.xs)
 
             LauncherDivider()
 
-            ForEach(Array(environmentDirectories.enumerated()), id: \.offset) { index, entry in
+            // 实例 DSH_HOME：每个实例独立，凭据从 ~/.dsh 软链
+            LauncherSettingRow(
+                "实例 DSH_HOME",
+                subtitle: instanceHomeSubtitle
+            ) {
+                HStack(spacing: LauncherSpace.sm) {
+                    LauncherBadge(
+                        versions.selectedInstalledVersion?.name ?? "未选择实例",
+                        tone: versions.selectedInstalledVersion == nil ? .warning : .accent
+                    )
+                    DSHPathText(text: instanceHomePath, tone: .tertiary, maxWidth: 300)
+                    LauncherIconButton(
+                        systemImage: "folder",
+                        variant: .ghost,
+                        size: .small,
+                        accessibilityLabel: "打开实例 DSH_HOME"
+                    ) {
+                        openDirectory(instanceHomePath, title: "实例 DSH_HOME")
+                    }
+                }
+            }
+
+            // versions / homes / logs / cache 真实路径与大小
+            ForEach(Array(directoryDisplayRows.enumerated()), id: \.offset) { index, row in
                 LauncherSettingRow(
-                    entry.title,
-                    subtitle: entry.detail,
-                    showsDivider: index < environmentDirectories.count - 1
+                    row.title,
+                    subtitle: row.kind == .homes
+                        ? "\(row.detail)；当前共 \(versions.installed.count) 个实例"
+                        : row.detail,
+                    showsDivider: index < directoryDisplayRows.count - 1
                 ) {
                     HStack(spacing: LauncherSpace.sm) {
-                        DSHPathText(text: entry.path, tone: .tertiary, maxWidth: 300)
+                        LauncherBadge(row.sizeText, tone: row.exists ? .neutral : .warning)
+                        DSHPathText(text: row.path, tone: .tertiary, maxWidth: 260)
                         LauncherIconButton(
                             systemImage: "folder",
                             variant: .ghost,
                             size: .small,
-                            accessibilityLabel: "打开\(entry.title)",
-                            action: { openDirectory(entry.path, title: entry.title) }
+                            accessibilityLabel: "打开\(row.title)",
+                            isDisabled: !row.exists,
+                            action: { openDirectory(row.path, title: row.title) }
                         )
                     }
                 }
             }
 
             LauncherSettingRow(
-                "已安装版本与占用",
+                "已安装实例与占用",
                 subtitle: DSHFormatting.installedSummary(versions.installed),
                 showsDivider: false
             ) {
@@ -743,11 +781,61 @@ public struct DSHSettingsPage: View {
                         size: .small
                     ) {
                         versions.refreshInstalled()
-                        router.showToast("已重新扫描已安装的 DSH 版本")
+                        router.showToast("已重新扫描已安装的 DSH 实例")
+                        Task { @MainActor in
+                            await reloadDirectories(showsToast: true)
+                        }
                     }
                     .fixedSize()
                 }
             }
+        }
+    }
+
+    /// 实例 DSH_HOME 的说明文案。
+    private var instanceHomeSubtitle: String {
+        guard let selected = versions.selectedInstalledVersion else {
+            return "还没有选中实例：安装或选择实例后，这里显示它独立的 DSH_HOME（\(versions.paths.homesDirectory.path)）"
+        }
+        return "\(selected.name) 独享：插件 / 会话隔离；登录凭据仍从 ~/.dsh 软链复用"
+    }
+
+    /// 当前选中实例的 DSH_HOME；没有实例时显示 homes 根目录。
+    private var instanceHomePath: String {
+        DSHDataTools.instanceHomePath(paths: versions.paths, instanceID: versions.settings.dshSelectedInstanceID)
+            ?? versions.paths.homesDirectory.path
+    }
+
+    /// 数据目录展示行：交互模式等后台统计，快照模式同步统计（确定性）。
+    private var directoryDisplayRows: [DSHDataDirectory] {
+        if !directoryRows.isEmpty { return directoryRows }
+        if snapshotMode {
+            return DSHDataTools.directories(
+                paths: versions.paths,
+                kinds: [.versions, .homes, .logs, .cache]
+            )
+        }
+        return [.versions, .homes, .logs, .cache].map { kind in
+            DSHDataDirectory(kind: kind, path: kind.url(paths: versions.paths).path, bytes: 0, exists: false)
+        }
+    }
+
+    /// 后台统计数据目录大小。
+    private func loadDirectoriesIfNeeded() async {
+        guard !snapshotMode, directoryRows.isEmpty else { return }
+        await reloadDirectories()
+    }
+
+    /// 重新统计目录大小（后台读盘）。
+    private func reloadDirectories(showsToast: Bool = false) async {
+        let paths = versions.paths
+        let rows = await Task.detached(priority: .userInitiated) {
+            DSHDataTools.directories(paths: paths, kinds: [.versions, .homes, .logs, .cache])
+        }.value
+        directoryRows = rows
+        if showsToast {
+            let total = rows.reduce(Int64(0)) { $0 + $1.bytes }
+            router.showToast("目录统计已刷新：\(DSHFormatting.byteCount(total))")
         }
     }
 
@@ -757,31 +845,6 @@ public struct DSHSettingsPage: View {
             return environment.summary
         }
         return snapshotMode ? "快照模式：未检测运行时" : "尚未检测运行时，点「重新检测」"
-    }
-
-    /// 运行时详情说明。
-    private var environmentDetailText: String {
-        if environment != nil {
-            return "检测完成 · 启动 DSH 时使用「实际使用」那一行的包管理器"
-        }
-        return snapshotMode
-            ? "快照模式不启动子进程，运行时路径未检测"
-            : "尚未检测；点页头或本行的「重新检测」"
-    }
-
-    /// 设置页展示的数据目录。
-    private var environmentDirectories: [(title: String, detail: String, path: String)] {
-        let paths = versions.paths
-        return [
-            ("DSH 根目录", "所有 DSH 数据文件的根目录", paths.root.path),
-            ("版本目录", "每个版本的 node_modules（版本之间互相隔离）", paths.versionsDirectory.path),
-            (
-                "用户数据目录（DSH_HOME）",
-                "所有 DSH 版本共享；自动复用 ~/.dsh 的登录凭据（API Key / 账号），插件与会话存放在这里",
-                paths.homeRoot.path
-            ),
-            ("日志目录", "DSH Web UI 进程日志", paths.logsDirectory.path)
-        ]
     }
 
     /// 在访达中打开目录。
@@ -844,22 +907,20 @@ public struct DSHSettingsPage: View {
 
             LauncherSettingRow(
                 "DSH Web UI",
-                subtitle: "使用官方 @deepseek-ai/dsh，通过 npm 安装到本地并隔离运行"
+                subtitle: "使用官方 @deepseek-ai/dsh，每个实例独立 node_modules 与 DSH_HOME"
             ) {
                 HStack(spacing: LauncherSpace.sm) {
                     LauncherBadge(
-                        versions.settings.dshSelectedVersion.isEmpty
-                            ? "未选择版本"
-                            : versions.settings.dshSelectedVersion,
-                        tone: versions.settings.dshSelectedVersion.isEmpty ? .warning : .neutral
+                        versions.selectedInstalledVersion?.name ?? "未选择实例",
+                        tone: versions.selectedInstalledVersion == nil ? .warning : .neutral
                     )
-                    LauncherBadge(DSHFormatting.installedSummary(versions.installed), tone: .neutral)
+                    LauncherBadge(DSHFormatting.instanceCountText(versions.installed), tone: .neutral)
                 }
             }
 
             LauncherSettingRow(
                 "DSH 数据目录",
-                subtitle: "启动器的 versions / logs / cache 与共享 DSH_HOME 都保存在这里；登录凭据自动复用 ~/.dsh"
+                subtitle: "实例目录 / 实例 DSH_HOME / 日志 / 缓存都在这里；登录凭据自动复用 ~/.dsh"
             ) {
                 HStack(spacing: LauncherSpace.sm) {
                     DSHPathText(text: versions.paths.root.path, tone: .tertiary, maxWidth: 320)
@@ -876,20 +937,21 @@ public struct DSHSettingsPage: View {
 
             LauncherDivider()
 
-            // 危险区：删除所有 DSH 数据（明确路径 + 二次确认）
+            // 危险区：删除所有实例数据（明确范围 + 二次确认，运行中禁止）
             VStack(alignment: .leading, spacing: LauncherSpace.sm) {
                 LauncherBanner(
-                    title: "删除启动器的 DSH 数据",
-                    message: "只删除启动器自己的 versions / logs / cache 与历史遗留的 homes 目录：已安装 DSH 版本与日志会丢失。不会删除启动器 home（插件 / 会话）里的用户数据，也不会删除 ~/.dsh 的登录凭据（API Key / 账号）。",
+                    title: "删除所有 DSH 实例数据",
+                    message: "会删除启动器里的所有实例（\(DSHFormatting.instanceCountText(versions.installed))）：实例目录、实例 DSH_HOME（插件 / 会话）、日志与缓存。不会删除 ~/.dsh 的登录凭据（API Key / 账号）。运行中的实例请先在启动页停止。",
                     tone: .danger
                 )
                 HStack(spacing: LauncherSpace.sm) {
                     Spacer(minLength: 0)
                     LauncherButton(
-                        "删除启动器 DSH 数据",
+                        "删除所有实例数据",
                         systemImage: "trash",
                         variant: .danger,
-                        size: .small
+                        size: .small,
+                        isDisabled: dshProcess.isRunning || dshProcess.isBusy
                     ) {
                         confirmDeleteAllData()
                     }
@@ -900,10 +962,10 @@ public struct DSHSettingsPage: View {
         }
     }
 
-    /// 删除启动器自己的 DSH 数据前确认（共享 DSH_HOME 不动）。
+    /// 删除所有实例数据前确认（~/.dsh 的登录凭据不动）。
     private func confirmDeleteAllData() {
         if dshProcess.isRunning || dshProcess.isBusy {
-            router.showToast("DSH Web UI 正在运行，请先在启动页停止后再清理数据", tone: .warning)
+            router.showToast("DSH Web UI 正在运行，请先在启动页停止后再删除数据", tone: .warning)
             return
         }
         let paths = versions.paths
@@ -913,19 +975,24 @@ public struct DSHSettingsPage: View {
             FileManager.default.fileExists(atPath: target.path)
         }
         guard exists else {
-            router.showToast("没有可删除的启动器 DSH 数据", tone: .info)
+            router.showToast("没有可删除的实例数据", tone: .info)
             return
         }
+        let instanceText = DSHFormatting.instanceCountText(versions.installed)
         router.showDialog(
             LauncherDialogRequest(
-                title: "删除启动器的 DSH 数据？",
-                message: "将真实删除：\(titles)\n路径：\(paths.root.path)\n已安装 DSH 版本与日志会丢失，且无法恢复。\n不会删除启动器 home（\(paths.homeRoot.path) 里的插件 / 会话），也不会删除 ~/.dsh 的登录凭据。",
-                confirmTitle: "删除启动器数据",
+                title: "删除所有 DSH 实例数据？",
+                message: "将真实删除全部 \(instanceText) 的数据：\(titles)\n路径：\(paths.root.path)\n实例目录、每个实例的 DSH_HOME（插件 / 会话）、日志与缓存都会丢失，且无法恢复。\n不会删除 ~/.dsh 的登录凭据（API Key / 账号）。",
+                confirmTitle: "删除所有实例数据",
                 isDestructive: true,
                 onConfirm: {
                     let report = DSHDataDeletion.deleteAll(paths: paths)
                     versions.refreshInstalled()
-                    versions.settings.dshSelectedVersion = ""
+                    versions.settings.dshSelectedInstanceID = ""
+                    directoryRows = []
+                    Task { @MainActor in
+                        await reloadDirectories()
+                    }
                     if report.failures.isEmpty {
                         router.showToast(report.summary)
                     } else {

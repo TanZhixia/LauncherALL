@@ -21,6 +21,7 @@ enum AppSnapshotExporter {
         let dshVersions = DSHVersionStore(settings: settings, paths: dshPaths)
         let dshProcess = DSHProcessController(settings: settings, paths: dshPaths)
         let dshPlugins = DSHPluginStore(settings: settings, paths: dshPaths)
+        let dshPacks = DSHPackService(paths: dshPaths, versions: dshVersions, plugins: dshPlugins, settings: settings)
         await engine.refreshEnvironment()
 
         var failures = 0
@@ -42,6 +43,7 @@ enum AppSnapshotExporter {
                     .environment(dshVersions)
                     .environment(dshProcess)
                     .environment(dshPlugins)
+                    .environment(dshPacks)
                     .launcherThemeEnvironment(manager)
                     .environment(\.colorScheme, theme.scheme)
                     .environment(\.launcherSnapshotMode, true)
@@ -80,6 +82,7 @@ enum AppSnapshotExporter {
                     .environment(dshVersions)
                     .environment(dshProcess)
                     .environment(dshPlugins)
+                    .environment(dshPacks)
                     .launcherThemeEnvironment(manager)
                     .environment(\.colorScheme, theme.scheme)
                     .environment(\.launcherSnapshotMode, true)

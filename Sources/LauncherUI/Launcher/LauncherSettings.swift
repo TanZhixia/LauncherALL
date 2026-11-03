@@ -66,6 +66,7 @@ public final class LauncherSettings {
         static let authAccounts = "launcher.settings.authAccounts"
         static let selectedAuthAccountID = "launcher.settings.selectedAuthAccountID"
         static let dshSelectedVersion = "launcher.settings.dshSelectedVersion"
+        static let dshSelectedInstanceID = "launcher.settings.dshSelectedInstanceID"
         static let dshPort = "launcher.settings.dshPort"
         static let dshAutoOpenBrowser = "launcher.settings.dshAutoOpenBrowser"
         static let dshPluginSource = "launcher.settings.dshPluginSource"
@@ -104,8 +105,10 @@ public final class LauncherSettings {
 
     // MARK: DSH（LauncherALL 的第二个启动器）
 
-    /// 当前选中的 DSH 版本；空串表示未选择。
+    /// 旧字段：当前选中的 DSH 版本（仅用于迁移）。
     public var dshSelectedVersion: String { didSet { persist(dshSelectedVersion, Keys.dshSelectedVersion) } }
+    /// 当前选中的 DSH 实例 ID；空串表示未选择。
+    public var dshSelectedInstanceID: String { didSet { persist(dshSelectedInstanceID, Keys.dshSelectedInstanceID) } }
     /// DSH Web UI 监听端口（0 = 自动挑一个空闲端口）。
     public var dshPort: Int { didSet { persist(dshPort, Keys.dshPort) } }
     /// 启动后自动用默认浏览器打开 DSH Web UI。
@@ -138,6 +141,7 @@ public final class LauncherSettings {
         self.authAccounts = LauncherSettings.decodeAccounts(defaults.data(forKey: Keys.authAccounts))
         self.selectedAuthAccountID = defaults.string(forKey: Keys.selectedAuthAccountID) ?? AuthAccountRecord.offlineID
         self.dshSelectedVersion = defaults.string(forKey: Keys.dshSelectedVersion) ?? ""
+        self.dshSelectedInstanceID = defaults.string(forKey: Keys.dshSelectedInstanceID) ?? ""
         self.dshPort = defaults.object(forKey: Keys.dshPort) as? Int ?? 3080
         self.dshAutoOpenBrowser = defaults.object(forKey: Keys.dshAutoOpenBrowser) as? Bool ?? true
         self.dshPluginSource = defaults.string(forKey: Keys.dshPluginSource) ?? DSHRegistryClient.defaultPluginSource

@@ -26,9 +26,9 @@ public enum DSHSettingsSection: String, CaseIterable, Identifiable, Sendable {
     /// 分类说明（右侧页头副标题）。
     public var subtitle: String {
         switch self {
-        case .launch: return "Web UI 端口、自动打开浏览器与默认版本"
+        case .launch: return "Web UI 端口、自动打开浏览器与默认实例"
         case .plugins: return "npm 源、插件加载源与本地缓存"
-        case .environment: return "Node / 包管理器检测与 DSH 数据目录"
+        case .environment: return "Node / 包管理器检测、实例 DSH_HOME 与数据目录"
         case .about: return "版本信息与数据管理"
         }
     }
@@ -145,11 +145,32 @@ public enum DSHFormatting {
         return components.string
     }
 
-    /// 已安装版本汇总："2 个版本 · 412 MB"；没有版本时给出引导文案。
-    public static func installedSummary(_ versions: [DSHInstalledVersion]) -> String {
-        guard !versions.isEmpty else { return "还没有安装 DSH 版本" }
-        let total = versions.reduce(Int64(0)) { $0 + ($1.sizeBytes ?? 0) }
-        return "\(versions.count) 个版本 · \(byteCount(total))"
+    /// 实例数量文案："2 个实例 · 1 个整合包"（没有整合包时省略后半段）。
+    public static func instanceCountText(_ instances: [DSHInstalledVersion]) -> String {
+        guard !instances.isEmpty else { return "还没有安装实例" }
+        let packs = instances.filter { $0.isPack }.count
+        let base = "\(instances.count) 个实例"
+        return packs > 0 ? "\(base) · \(packs) 个整合包" : base
+    }
+
+    /// 实例汇总："2 个实例 · 1 个整合包 · 共 412 MB"；没有实例时给出引导文案。
+    public static func installedSummary(_ instances: [DSHInstalledVersion]) -> String {
+        guard !instances.isEmpty else { return "还没有安装实例" }
+        let total = instances.reduce(Int64(0)) { $0 + ($1.sizeBytes ?? 0) }
+        return "\(instanceCountText(instances)) · 共 \(byteCount(total))"
+    }
+
+    /// 实例展示名："我的整合包 · DSH 0.2.1"。
+    public static func instanceLabel(_ instance: DSHInstalledVersion) -> String {
+        "\(instance.name) · DSH \(instance.dshVersion)"
+    }
+
+    /// 实例补充说明：整合包实例带上来源包名 / 版本。
+    public static func instanceDetail(_ instance: DSHInstalledVersion) -> String {
+        guard instance.isPack else { return "DSH \(instance.dshVersion)" }
+        let pack = instance.packName ?? "整合包"
+        let version = instance.packVersion.map { " v\($0)" } ?? ""
+        return "\(pack)\(version) · DSH \(instance.dshVersion)"
     }
 }
 
@@ -306,49 +327,44 @@ public struct DSHRuntimeEnvironment: Equatable, Sendable {
 /// DSH 数据目录的种类。
 public enum DSHDataDirectoryKind: String, CaseIterable, Identifiable, Sendable {
     case versions
-    case home
+    case homes
+    case logs
     case cache
     case bin
-    case logs
 
     public var id: String { rawValue }
 
     /// 目录标题。
     public var title: String {
         switch self {
-        case .versions: return "版本目录"
-        case .home: return "用户数据目录（DSH_HOME）"
+        case .versions: return "实例目录"
+        case .homes: return "实例数据目录（homes）"
+        case .logs: return "日志目录"
         case .cache: return "缓存目录"
         case .bin: return "工具目录"
-        case .logs: return "日志目录"
         }
     }
 
     /// 目录说明。
     public var detail: String {
         switch self {
-        case .versions: return "每个版本的 node_modules（版本之间互相隔离）"
-        case .home: return "所有 DSH 版本共享；自动复用 ~/.dsh 的登录凭据（API Key / 账号），插件与会话存放在这里"
+        case .versions: return "每个实例的 node_modules（同一版本可安装多份）"
+        case .homes: return "每个实例独立的 DSH_HOME（插件 / 会话）；登录凭据软链复用 ~/.dsh"
+        case .logs: return "Web UI 进程日志"
         case .cache: return "版本列表与插件市场缓存"
         case .bin: return "生成的 pnpm shim 等工具"
-        case .logs: return "Web UI 进程日志"
         }
     }
 
-    /// 真实路径（`.home` 为所有版本共享的 `$DSH_HOME`，默认 `~/.dsh`）。
+    /// 真实路径。
     public func url(paths: DSHPaths) -> URL {
         switch self {
         case .versions: return paths.versionsDirectory
-        case .home: return paths.homeRoot
+        case .homes: return paths.homesDirectory
+        case .logs: return paths.logsDirectory
         case .cache: return paths.cacheDirectory
         case .bin: return paths.binDirectory
-        case .logs: return paths.logsDirectory
         }
-    }
-
-    /// 是否位于启动器自己的数据根目录（共享 DSH_HOME 不在其中）。
-    public var isInsideLauncherRoot: Bool {
-        self != .home
     }
 }
 
@@ -398,10 +414,17 @@ public enum DSHDataTools {
         versions.reduce(Int64(0)) { $0 + ($1.sizeBytes ?? 0) }
     }
 
-    /// 当前版本 profile 目录（未启动过 Web UI 时可能不存在）。
+    /// 实例 profile 目录（未启动过 Web UI 时可能不存在）。
+    /// - Parameter version: 实例 id（实例模型里日志 / profile 都按实例 id 定位）。
     public static func profilePath(paths: DSHPaths, version: String?) -> String? {
         guard let version, !version.isEmpty else { return nil }
         return paths.profileDirectory(for: version).path
+    }
+
+    /// 实例自己的 DSH_HOME（无实例时返回 nil）。
+    public static func instanceHomePath(paths: DSHPaths, instanceID: String?) -> String? {
+        guard let instanceID, !instanceID.isEmpty else { return nil }
+        return paths.homeDirectory(for: instanceID).path
     }
 }
 
@@ -479,48 +502,62 @@ public struct DSHDataDeletionTarget: Identifiable, Equatable, Sendable {
     }
 }
 
-/// 一次「删除所有 DSH 数据」的结果。
+/// 一次「删除所有 DSH 实例数据」的结果。
 public struct DSHDataDeletionReport: Equatable, Sendable {
     public let removed: [String]
     public let failures: [String]
+    /// 删除后又重建的空壳目录（如 homes/）。
+    public let recreated: [String]
 
-    public init(removed: [String], failures: [String]) {
+    public init(removed: [String], failures: [String], recreated: [String] = []) {
         self.removed = removed
         self.failures = failures
+        self.recreated = recreated
     }
 
     /// 结果摘要文案。
     public var summary: String {
         if failures.isEmpty {
-            return removed.isEmpty ? "没有需要删除的启动器 DSH 数据" : "已删除 \(removed.count) 个数据目录：\(removed.joined(separator: "、"))"
+            return removed.isEmpty ? "没有需要删除的实例数据" : "已删除 \(removed.count) 个实例数据目录：\(removed.joined(separator: "、"))"
         }
         return "已删除 \(removed.count) 个目录，\(failures.count) 个删除失败"
     }
 }
 
-/// 危险区：删除启动器自己的 DSH 数据。
+/// 危险区：删除启动器里的所有 DSH 实例数据。
 ///
-/// 只删除 `versions / logs / cache` 与历史遗留的 `homes/`；
-/// **不会删除共享的 `$DSH_HOME`（`~/.dsh`）**，用户的插件、会话与登录凭据都会保留。
+/// 删除 `versions / homes / logs / cache`（以及迁移前的旧共享 home）；
+/// **不会删除 `~/.dsh`**：登录凭据（API Key / 账号）来自那里，必须保留。
 public enum DSHDataDeletion {
 
-    /// 会被删除的目录（供确认框明确列出）。
+    /// 会被删除的目录（供确认框明确列出）。旧共享 `homeRoot` 只在存在时才会被列进去。
     public static func targets(paths: DSHPaths) -> [DSHDataDeletionTarget] {
-        [
-            DSHDataDeletionTarget(id: "versions", title: "版本目录", path: paths.versionsDirectory.path),
+        var targets = [
+            DSHDataDeletionTarget(id: "versions", title: "实例目录", path: paths.versionsDirectory.path),
+            DSHDataDeletionTarget(id: "homes", title: "实例数据目录", path: paths.homesDirectory.path),
             DSHDataDeletionTarget(id: "logs", title: "日志目录", path: paths.logsDirectory.path),
-            DSHDataDeletionTarget(id: "cache", title: "缓存目录", path: paths.cacheDirectory.path),
-            DSHDataDeletionTarget(id: "legacy-homes", title: "历史遗留 homes 目录", path: paths.homesDirectory.path)
+            DSHDataDeletionTarget(id: "cache", title: "缓存目录", path: paths.cacheDirectory.path)
         ]
+        // 迁移前的旧共享 home（如果还在），属于启动器自己的数据
+        let legacyHome = paths.homeRoot
+        if FileManager.default.fileExists(atPath: legacyHome.path) {
+            targets.append(
+                DSHDataDeletionTarget(id: "legacy-home", title: "历史共享 home", path: legacyHome.path)
+            )
+        }
+        return targets
     }
 
-    /// 真实删除上述目录（共享 DSH_HOME 不动）。
+    /// 真实删除上述目录，并重建 `homes/` 空壳；不会碰 `~/.dsh`。
     public static func deleteAll(paths: DSHPaths) -> DSHDataDeletionReport {
         let fileManager = FileManager.default
         var removed: [String] = []
         var failures: [String] = []
+        var recreated: [String] = []
         for target in targets(paths: paths) {
             guard fileManager.fileExists(atPath: target.path) else { continue }
+            // 空的 homes/ 空壳已经等同于清理完成，保留它避免重复删除
+            if target.id == "homes", isEmptyDirectory(target.path) { continue }
             do {
                 try fileManager.removeItem(at: URL(fileURLWithPath: target.path))
                 removed.append(target.title)
@@ -528,7 +565,25 @@ public enum DSHDataDeletion {
                 failures.append("\(target.title)（\(error.localizedDescription)）")
             }
         }
-        return DSHDataDeletionReport(removed: removed, failures: failures)
+        // 保留目录空壳，方便下次安装 / 启动直接写入
+        do {
+            try fileManager.createDirectory(at: paths.homesDirectory, withIntermediateDirectories: true)
+            recreated.append("实例数据目录")
+        } catch {
+            failures.append("重建实例数据目录失败（\(error.localizedDescription)）")
+        }
+        do {
+            try fileManager.createDirectory(at: paths.root, withIntermediateDirectories: true)
+        } catch {
+            // 根目录通常已存在，失败不影响结果
+        }
+        return DSHDataDeletionReport(removed: removed, failures: failures, recreated: recreated)
+    }
+
+    /// 目录是否为空。
+    private static func isEmptyDirectory(_ path: String) -> Bool {
+        let contents = try? FileManager.default.contentsOfDirectory(atPath: path)
+        return (contents?.isEmpty ?? false)
     }
 }
 

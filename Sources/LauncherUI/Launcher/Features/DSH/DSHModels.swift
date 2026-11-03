@@ -33,22 +33,87 @@ public struct DSHVersionInfo: Identifiable, Hashable, Sendable {
     public var tagText: String? { distTags.first }
 }
 
-/// 已安装到本机的 DSH 版本。
+/// 实例类型：普通安装 / 从整合包导入。
+public enum DSHInstanceKind: String, Codable, Sendable, Hashable {
+    case vanilla
+    case pack
+}
+
+/// 已安装到本机的一个 DSH 实例：
+/// - `id` 是实例唯一标识（目录名 / 选中标识），允许同一 DSH 版本重复安装；
+/// - `name` 是用户可见的自定义名字；
+/// - `dshVersion` 是实际的 npm 版本（如 `0.2.1-rc.5`）。
 public struct DSHInstalledVersion: Identifiable, Hashable, Codable, Sendable {
-    public let version: String
+    public let id: String
+    public var name: String
+    public let dshVersion: String
     public let installedAt: Date
     public let path: String
     public var sizeBytes: Int64?
+    public var kind: DSHInstanceKind
+    /// 来源整合包名（`kind == .pack` 时）。
+    public var packName: String?
+    /// 来源整合包版本。
+    public var packVersion: String?
+    /// 旧版本（按 npm 版本号建目录）迁移过来的实例。
+    public var legacy: Bool
 
-    public var id: String { version }
+    /// 兼容旧 UI：显示时与 DSH 版本号相同。
+    public var version: String { dshVersion }
 
-    public init(version: String, installedAt: Date, path: String, sizeBytes: Int64? = nil) {
-        self.version = version
+    public var isPack: Bool { kind == .pack }
+
+    public init(
+        id: String,
+        name: String,
+        dshVersion: String,
+        installedAt: Date,
+        path: String,
+        sizeBytes: Int64? = nil,
+        kind: DSHInstanceKind = .vanilla,
+        packName: String? = nil,
+        packVersion: String? = nil,
+        legacy: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.dshVersion = dshVersion
         self.installedAt = installedAt
         self.path = path
         self.sizeBytes = sizeBytes
+        self.kind = kind
+        self.packName = packName
+        self.packVersion = packVersion
+        self.legacy = legacy
     }
 
+    /// 兼容旧调用：以 npm 版本号同时作为实例 ID。
+    public init(version: String, installedAt: Date, path: String, sizeBytes: Int64? = nil) {
+        self.init(
+            id: version,
+            name: "DSH \(version)",
+            dshVersion: version,
+            installedAt: installedAt,
+            path: path,
+            sizeBytes: sizeBytes,
+            kind: .vanilla,
+            legacy: false
+        )
+    }
+
+    /// 旧目录（目录名 = npm 版本号）迁移成实例。
+    public init(legacyVersion: String, installedAt: Date, path: String, sizeBytes: Int64? = nil) {
+        self.init(
+            id: legacyVersion,
+            name: "DSH \(legacyVersion)",
+            dshVersion: legacyVersion,
+            installedAt: installedAt,
+            path: path,
+            sizeBytes: sizeBytes,
+            kind: .vanilla,
+            legacy: true
+        )
+    }
 }
 
 // MARK: - 目录状态

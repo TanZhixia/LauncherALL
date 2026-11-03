@@ -160,14 +160,23 @@ final class DSHBackendTests: XCTestCase {
         let root = tempRoot()
         let paths = DSHPaths(root: root)
         XCTAssertEqual(paths.versionDirectory("0.2.1-rc.5").path, root.appendingPathComponent("versions/0.2.1-rc.5").path)
-        XCTAssertEqual(paths.homeDirectory(for: "0.2.1-rc.5").path, root.appendingPathComponent("home").path, "所有版本共享 launcher 的 DSH_HOME")
-        XCTAssertEqual(paths.homeDirectory(for: "0.9.9").path, paths.homeDirectory(for: "0.2.1-rc.5").path)
+        // 实例化改造后：每个实例有自己独立的 DSH_HOME（homes/<实例 ID>），不再共享 homeRoot。
+        XCTAssertEqual(paths.homeDirectory(for: "0.2.1-rc.5").path, root.appendingPathComponent("homes/0.2.1-rc.5").path)
+        XCTAssertEqual(paths.homesDirectory.path, root.appendingPathComponent("homes").path)
+        XCTAssertNotEqual(paths.homeDirectory(for: "0.2.1-rc.5").path, paths.homeRoot.path, "实例 home 不再等于旧共享 homeRoot")
+        XCTAssertNotEqual(
+            paths.homeDirectory(for: "0.2.1-rc.5").path,
+            paths.homeDirectory(for: "0.9.9").path,
+            "不同实例的 home 必须彼此隔离"
+        )
         XCTAssertEqual(paths.isolatedHomeDirectory(for: "0.2.1-rc.5").path, root.appendingPathComponent("homes/0.2.1-rc.5").path)
-        XCTAssertEqual(paths.profileDirectory(for: "0.2.1-rc.5").path, root.appendingPathComponent("home/profiles/web").path)
+        XCTAssertEqual(paths.profileDirectory(for: "0.2.1-rc.5").path, root.appendingPathComponent("homes/0.2.1-rc.5/profiles/web").path)
         XCTAssertEqual(paths.logFile(for: "0.2.1-rc.5").lastPathComponent, "0.2.1-rc.5.log")
         XCTAssertTrue(paths.cliScript(for: "1.0.0").path.hasSuffix("node_modules/@deepseek-ai/dsh/lib/bin.js"))
+        XCTAssertTrue(paths.cliScript(for: "1.0.0").path.contains("/versions/1.0.0/"))
         XCTAssertNoThrow(try paths.ensureDirectories())
         XCTAssertTrue(FileManager.default.fileExists(atPath: paths.versionsDirectory.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: paths.homesDirectory.path))
     }
 
     func testPortFinder() {
@@ -204,32 +213,88 @@ final class DSHBackendTests: XCTestCase {
         let paths = DSHPaths(root: root)
         try paths.ensureDirectories()
         let version = "0.2.1-rc.5"
-        let bin = paths.cliScript(for: version)
+        // 实例 ID 与 DSH 版本解耦：同一版本可以安装多次。
+        let instanceID = "instance-\(UUID().uuidString.lowercased())"
+        let bin = paths.cliScript(for: instanceID)
         try FileManager.default.createDirectory(at: bin.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data().write(to: bin)
         let metadata = try JSONEncoder().encode(
-            InstallMetadataFixture(version: version, installedAt: Date(timeIntervalSince1970: 1_700_000_000), sizeBytes: 123)
+            DSHInstalledVersion(
+                id: instanceID,
+                name: "我的 DSH",
+                dshVersion: version,
+                installedAt: Date(timeIntervalSince1970: 1_700_000_000),
+                path: paths.versionDirectory(instanceID).path,
+                sizeBytes: 123,
+                kind: .vanilla
+            )
         )
-        try metadata.write(to: paths.versionDirectory(version).appendingPathComponent("launcher-install.json"))
+        try metadata.write(to: paths.versionDirectory(instanceID).appendingPathComponent("launcher-install.json"))
 
         let settings = makeSettings()
         let store = DSHVersionStore(settings: settings, paths: paths)
-        XCTAssertEqual(store.installed.map(\.version), [version])
+        XCTAssertEqual(store.installed.map(\.id), [instanceID])
+        XCTAssertEqual(store.installed.first?.dshVersion, version)
+        XCTAssertEqual(store.installed.first?.name, "我的 DSH")
+        // 元数据里已有的 sizeBytes 原样保留，不被磁盘真实占用覆盖。
         XCTAssertEqual(store.installed.first?.sizeBytes, 123)
-        XCTAssertEqual(settings.dshSelectedVersion, version, "首次扫描没有选中版本时自动选择")
-        XCTAssertEqual(store.selectedInstalledVersion?.version, version)
+        XCTAssertEqual(settings.dshSelectedInstanceID, instanceID, "首次扫描没有选中实例时自动选择")
+        XCTAssertEqual(store.selectedInstalledVersion?.id, instanceID)
+        XCTAssertEqual(store.installed.first?.version, version, "兼容属性 version == dshVersion")
 
         store.select("9.9.9")
-        XCTAssertEqual(store.selectedInstalledVersion?.version, version, "未安装版本不能被选中")
-        XCTAssertTrue(store.uninstall(version))
+        XCTAssertEqual(store.selectedInstalledVersion?.id, instanceID, "未安装实例不能被选中")
+        store.select("../evil")
+        XCTAssertEqual(store.selectedInstalledVersion?.id, instanceID, "非法实例 ID 不能被选中")
+
+        XCTAssertTrue(store.uninstall(instanceID))
         XCTAssertTrue(store.installed.isEmpty)
-        XCTAssertEqual(settings.dshSelectedVersion, "")
+        XCTAssertEqual(settings.dshSelectedInstanceID, "")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: paths.versionDirectory(instanceID).path))
     }
 
-    private struct InstallMetadataFixture: Codable {
-        let version: String
-        let installedAt: Date
-        let sizeBytes: Int64?
+    /// 旧版「按版本号建目录 + dshSelectedVersion」应迁移成实例模型：
+    /// 目录名当实例 ID、legacy 标记、选中项迁移到 dshSelectedInstanceID。
+    @MainActor
+    func testLegacyVersionDirectoryMigratesToInstance() throws {
+        let root = tempRoot()
+        let paths = DSHPaths(root: root)
+        try paths.ensureDirectories()
+        let version = "0.2.0"
+        let bin = paths.cliScript(for: version)
+        try FileManager.default.createDirectory(at: bin.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("// dsh bin".utf8).write(to: bin)
+
+        let settings = makeSettings()
+        settings.dshSelectedVersion = version
+        let store = DSHVersionStore(settings: settings, paths: paths)
+        store.refreshInstalled()
+
+        XCTAssertEqual(store.installed.map(\.id), [version])
+        XCTAssertEqual(store.installed.first?.legacy, true, "旧目录应标记为 legacy")
+        XCTAssertEqual(store.installed.first?.dshVersion, version)
+        XCTAssertEqual(settings.dshSelectedInstanceID, version, "旧 dshSelectedVersion 应迁移成实例 ID")
+        XCTAssertEqual(store.selectedInstalledVersion?.id, version)
+
+        // 同一 DSH 版本的多个实例查询。
+        let secondID = "instance-\(UUID().uuidString.lowercased())"
+        let secondBin = paths.cliScript(for: secondID)
+        try FileManager.default.createDirectory(at: secondBin.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data().write(to: secondBin)
+        try JSONEncoder().encode(
+            DSHInstalledVersion(
+                id: secondID,
+                name: "DSH 0.2.0",
+                dshVersion: version,
+                installedAt: Date(),
+                path: paths.versionDirectory(secondID).path,
+                kind: .vanilla
+            )
+        ).write(to: paths.versionDirectory(secondID).appendingPathComponent("launcher-install.json"))
+        store.refreshInstalled()
+        XCTAssertEqual(Set(store.instances(of: version).map(\.id)), Set([version, secondID]), "同版本多实例")
+        XCTAssertTrue(store.hasInstance(of: version))
+        XCTAssertFalse(store.hasInstance(of: "9.9.9"))
     }
 
     // MARK: - 已安装插件
@@ -390,12 +455,14 @@ final class DSHBackendTests: XCTestCase {
         let settings = LauncherSettings(defaults: defaults)
         XCTAssertEqual(settings.dshPort, 3080)
         XCTAssertTrue(settings.dshAutoOpenBrowser)
-        XCTAssertEqual(settings.dshSelectedVersion, "")
+        XCTAssertEqual(settings.dshSelectedVersion, "", "旧字段默认空")
+        XCTAssertEqual(settings.dshSelectedInstanceID, "", "实例选择默认空")
         XCTAssertEqual(settings.dshPluginSource, DSHRegistryClient.defaultPluginSource)
         XCTAssertEqual(settings.dshRegistry, "")
 
         settings.dshPort = 4090
         settings.dshSelectedVersion = "0.2.1-rc.5"
+        settings.dshSelectedInstanceID = "instance-abc"
         settings.dshAutoOpenBrowser = false
         settings.dshPluginSource = "https://example.com/plugins.json"
         settings.dshRegistry = "https://registry.example.com"
@@ -403,6 +470,7 @@ final class DSHBackendTests: XCTestCase {
         let reloaded = LauncherSettings(defaults: defaults)
         XCTAssertEqual(reloaded.dshPort, 4090)
         XCTAssertEqual(reloaded.dshSelectedVersion, "0.2.1-rc.5")
+        XCTAssertEqual(reloaded.dshSelectedInstanceID, "instance-abc", "实例 ID 应持久化")
         XCTAssertFalse(reloaded.dshAutoOpenBrowser)
         XCTAssertEqual(reloaded.dshPluginSource, "https://example.com/plugins.json")
         XCTAssertEqual(reloaded.dshRegistry, "https://registry.example.com")

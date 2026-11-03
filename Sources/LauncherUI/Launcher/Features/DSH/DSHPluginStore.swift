@@ -210,7 +210,7 @@ public final class DSHPluginStore {
 
     /// 读取某版本 profile 的已安装插件（profile/package.json 的 dependencies）。
     public func installedPlugins(for version: DSHInstalledVersion) -> [DSHInstalledPlugin] {
-        let manifestURL = paths.profileDirectory(for: version.version).appendingPathComponent("package.json")
+        let manifestURL = paths.profileDirectory(for: version.id).appendingPathComponent("package.json")
         guard let data = try? Data(contentsOf: manifestURL) else { return [] }
         struct Manifest: Decodable {
             let dependencies: [String: String]?
@@ -265,6 +265,23 @@ public final class DSHPluginStore {
         )
     }
 
+    /// 按原始安装标识安装插件（整合包导入用；spec 形如 `pkg@1.2.3` / `github:o/r` / 本地 tgz）。
+    @discardableResult
+    public func installRawSpec(_ rawSpec: String, into version: DSHInstalledVersion) async -> Bool {
+        guard operation == nil else { return false }
+        let spec = rawSpec.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !spec.isEmpty, !spec.hasPrefix("-"), !spec.contains("\n") else {
+            lastError = .pluginInstallFailed("插件安装标识不合法：\(rawSpec)")
+            return false
+        }
+        return await runPluginCommand(
+            operation: .installing(spec),
+            arguments: ["plugin", "--profile", "web", "add", spec],
+            version: version,
+            failure: { DSHError.pluginInstallFailed($0) }
+        )
+    }
+
     /// 从指定版本卸载插件。
     @discardableResult
     public func remove(_ plugin: DSHInstalledPlugin, from version: DSHInstalledVersion) async -> Bool {
@@ -292,7 +309,7 @@ public final class DSHPluginStore {
             lastError = .nodeNotFound
             return false
         }
-        let script = paths.cliScript(for: version.version)
+        let script = paths.cliScript(for: version.id)
         guard FileManager.default.fileExists(atPath: script.path) else {
             lastError = .notInstalled(version.version)
             return false
@@ -303,7 +320,7 @@ public final class DSHPluginStore {
                 try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shim.path)
             }
         }
-        let home = paths.homeDirectory(for: version.version)
+        let home = paths.homeDirectory(for: version.id)
         try? paths.ensureDirectories()
         paths.seedSharedHomeIfNeeded()
         try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)

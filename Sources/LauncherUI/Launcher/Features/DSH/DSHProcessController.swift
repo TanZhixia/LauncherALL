@@ -15,7 +15,9 @@ public final class DSHProcessController {
     public private(set) var state: DSHProcessState = .idle
     /// 最近日志行（最多 500 行）。
     public private(set) var logLines: [String] = []
-    /// 当前运行 / 最近一次运行的版本。
+    /// 当前运行 / 最近一次运行的实例 ID。
+    public private(set) var activeInstanceID: String?
+    /// 当前运行实例的 DSH 版本号（展示用）。
     public private(set) var activeVersion: String?
     public private(set) var activePort: Int?
     public private(set) var startedAt: Date?
@@ -46,15 +48,16 @@ public final class DSHProcessController {
     public var logText: String { logLines.joined(separator: "\n") }
 
     /// 日志文件路径。
-    public func logFileURL(version: String) -> URL { paths.logFile(for: version) }
+    public func logFileURL(instanceID: String) -> URL { paths.logFile(for: instanceID) }
 
     // MARK: 启动
 
     /// 启动指定版本的 Web UI。
     @discardableResult
     public func start(version: DSHInstalledVersion) async -> Bool {
+        let instanceID = version.id
         guard !isRunning && !isBusy else { return false }
-        let script = paths.cliScript(for: version.version)
+        let script = paths.cliScript(for: instanceID)
         guard FileManager.default.fileExists(atPath: script.path) else {
             state = .failed(DSHError.notInstalled(version.version).localizedDescription)
             return false
@@ -67,7 +70,8 @@ public final class DSHProcessController {
         // 0 = 交给 dsh 自己分配（避免先探测端口再被占用的 TOCTOU）
         let port = settings.dshPort > 0 ? DSHPortFinder.findPort(preferred: settings.dshPort) : 0
         activePort = port
-        activeVersion = version.version
+        activeInstanceID = instanceID
+        activeVersion = version.dshVersion
         startupURL = nil
         lineCount = 0
         logLines = []
@@ -75,11 +79,11 @@ public final class DSHProcessController {
         startedAt = Date()
         state = .starting
 
-        let home = paths.homeDirectory(for: version.version)
+        let home = paths.homeDirectory(for: instanceID)
         do {
             try paths.ensureDirectories()
-            sanitizeExistingLogFile(version: version.version)
-            paths.seedSharedHomeIfNeeded()
+            sanitizeExistingLogFile(instanceID: instanceID)
+            paths.seedHomeIfNeeded(home)
             try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         } catch {
             state = .failed(DSHError.launchFailed(error.localizedDescription).localizedDescription)
@@ -89,7 +93,7 @@ public final class DSHProcessController {
         let process = Process()
         process.executableURL = node
         process.arguments = [script.path, "--profile", "web", "--no-open", "--port", String(port)]
-        process.currentDirectoryURL = paths.versionDirectory(version.version)
+        process.currentDirectoryURL = paths.versionDirectory(instanceID)
         var environment = DSHExecutables.augmentedEnvironment(node: node)
         environment["DSH_HOME"] = home.path
         environment["NODE_ENV"] = "production"
@@ -104,7 +108,7 @@ public final class DSHProcessController {
         readTask = Task { [weak self] in
             do {
                 for try await line in handle.bytes.lines {
-                    await self?.appendOutput(line, version: version.version)
+                    await self?.appendOutput(line, instanceID: instanceID)
                 }
             } catch {
                 // 进程退出后读取中断属于正常路径
@@ -135,20 +139,20 @@ public final class DSHProcessController {
                 if settings.dshAutoOpenBrowser {
                     open(url)
                 }
-                appendLogFile(Self.sanitizedTokenLine("✓ DSH web 已启动：\(url)"), version: version.version)
-                monitorExit(process, version: version.version)
+                appendLogFile(Self.sanitizedTokenLine("✓ DSH web 已启动：\(url)"), instanceID: instanceID)
+                monitorExit(process, instanceID: instanceID)
                 return true
             }
             try? await Task.sleep(nanoseconds: 150_000_000)
         }
 
-        appendLogFile("✗ 启动超时，已终止进程", version: version.version)
+        appendLogFile("✗ 启动超时，已终止进程", instanceID: instanceID)
         stopProcess()
         state = .failed(DSHError.launchFailed("启动超时（90 秒内没有等到 dsh web 的启动地址）").localizedDescription)
         return false
     }
 
-    private func monitorExit(_ process: Process, version: String) {
+    private func monitorExit(_ process: Process, instanceID: String) {
         exitMonitor?.cancel()
         exitMonitor = Task { [weak self] in
             while process.isRunning {
@@ -161,7 +165,7 @@ public final class DSHProcessController {
                 self.state = .failed(
                     DSHError.processExited(code: process.terminationStatus, tail: tail).localizedDescription
                 )
-                self.appendLogFile("✗ DSH web 已退出（退出码 \(process.terminationStatus)）", version: version)
+                self.appendLogFile("✗ DSH web 已退出（退出码 \(process.terminationStatus)）", instanceID: instanceID)
             }
         }
     }
@@ -176,7 +180,7 @@ public final class DSHProcessController {
         }
         isStopping = true
         state = .stopping
-        appendLogFile("… 正在停止 DSH web", version: activeVersion ?? "unknown")
+        appendLogFile("… 正在停止 DSH web", instanceID: activeInstanceID ?? "unknown")
         process.terminate()
         let deadline = Date().addingTimeInterval(3)
         while process.isRunning && Date() < deadline {
@@ -223,7 +227,7 @@ public final class DSHProcessController {
         process = nil
         startupURL = nil
         startedAt = nil
-        appendLogFile("✓ DSH web 已停止", version: activeVersion ?? "unknown")
+        appendLogFile("✓ DSH web 已停止", instanceID: activeInstanceID ?? "unknown")
     }
 
     // MARK: 浏览器 / 复制
@@ -247,7 +251,7 @@ public final class DSHProcessController {
 
     // MARK: 输出
 
-    private func appendOutput(_ line: String, version: String) async {
+    private func appendOutput(_ line: String, instanceID: String) async {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         lineCount += 1
@@ -259,7 +263,7 @@ public final class DSHProcessController {
         let sanitized = Self.sanitizedTokenLine(trimmed)
         logLines.append(sanitized)
         if logLines.count > 500 { logLines.removeFirst(logLines.count - 500) }
-        appendLogFile(sanitized, version: version)
+        appendLogFile(sanitized, instanceID: instanceID)
     }
 
     /// 把日志行里的 `token=…` 替换成 `token=***`（供日志展示 / 落盘）。
@@ -272,8 +276,8 @@ public final class DSHProcessController {
         )
     }
 
-    private func appendLogFile(_ line: String, version: String) {
-        let fileURL = paths.logFile(for: version)
+    private func appendLogFile(_ line: String, instanceID: String) {
+        let fileURL = paths.logFile(for: instanceID)
         try? paths.ensureDirectories()
         let timestamp = Self.logDateFormatter.string(from: Date())
         let payload = "[\(timestamp)] \(line)\n"
@@ -294,8 +298,8 @@ public final class DSHProcessController {
     }
 
     /// 历史日志里可能残留旧版本写入的 token：启动前先脱敏重写一遍。
-    private func sanitizeExistingLogFile(version: String) {
-        let url = paths.logFile(for: version)
+    private func sanitizeExistingLogFile(instanceID: String) {
+        let url = paths.logFile(for: instanceID)
         guard let data = try? Data(contentsOf: url), !data.isEmpty else { return }
         let text = String(decoding: data, as: UTF8.self)
         guard text.contains("token=") else {

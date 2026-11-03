@@ -4,10 +4,62 @@ import AppKit
 
 @testable import LauncherUI
 
-/// DSH 启动页测试：纯展示逻辑 + 两主题 1080×720 离屏渲染。
-/// 渲染只为验证「不崩溃 / 不溢出」，需要人工看图时可设置环境变量
-/// `DSH_LAUNCH_SNAPSHOT_DIR=/tmp/dsh-launch-snap` 再跑本文件，会把两张 PNG 写到该目录。
+/// DSH 启动页测试：实例模型纯逻辑 + 两主题 1080×720 离屏渲染。
+/// 渲染验证「多实例同名版本 / 整合包实例 / 空态」不崩溃、不溢出；需要人工看图时可设置环境变量
+/// `DSH_LAUNCH_SNAPSHOT_DIR=/tmp/dsh-launch-snap` 再跑本文件，会把 PNG 写到该目录。
 final class DSHLaunchUITests: XCTestCase {
+
+    // MARK: - Fixture
+
+    /// 构造一个已安装实例（完整 init）。
+    private func makeInstance(
+        id: String,
+        name: String,
+        dshVersion: String,
+        size: Int64 = 1_234_567,
+        kind: DSHInstanceKind = .vanilla,
+        packName: String? = nil,
+        packVersion: String? = nil
+    ) -> DSHInstalledVersion {
+        DSHInstalledVersion(
+            id: id,
+            name: name,
+            dshVersion: dshVersion,
+            installedAt: Date(timeIntervalSince1970: 1_800_000_000),
+            path: "/tmp/dsh/versions/\(id)",
+            sizeBytes: size,
+            kind: kind,
+            packName: packName,
+            packVersion: packVersion,
+            legacy: false
+        )
+    }
+
+    /// 在临时 DSH 目录里"真实安装"一个实例（入口脚本 + launcher-install.json 元数据）。
+    private func seedInstance(_ instance: DSHInstalledVersion, paths: DSHPaths) throws {
+        let script = paths.cliScript(for: instance.id)
+        try FileManager.default.createDirectory(
+            at: script.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "// fake dsh cli for offscreen tests\n".write(to: script, atomically: true, encoding: .utf8)
+        let metadata = DSHInstalledVersion(
+            id: instance.id,
+            name: instance.name,
+            dshVersion: instance.dshVersion,
+            installedAt: instance.installedAt,
+            path: paths.versionDirectory(instance.id).path,
+            sizeBytes: instance.sizeBytes,
+            kind: instance.kind,
+            packName: instance.packName,
+            packVersion: instance.packVersion,
+            legacy: false
+        )
+        try JSONEncoder().encode(metadata).write(
+            to: paths.versionDirectory(instance.id).appendingPathComponent("launcher-install.json"),
+            options: .atomic
+        )
+    }
 
     // MARK: - URL 脱敏
 
@@ -20,11 +72,7 @@ final class DSHLaunchUITests: XCTestCase {
         XCTAssertTrue(sanitized.contains("theme=dark"), "普通 query 应保留：\(sanitized)")
         XCTAssertEqual(DSHLaunchPresentation.sanitizedURL(""), "—")
         XCTAssertEqual(DSHLaunchPresentation.sanitizedURL("   "), "—")
-    }
-
-    func testSanitizedURLHandlesMalformedURL() {
-        let sanitized = DSHLaunchPresentation.sanitizedURL("not-a-url?token=abc")
-        XCTAssertFalse(sanitized.contains("abc"))
+        XCTAssertFalse(DSHLaunchPresentation.sanitizedURL("not-a-url?token=abc").contains("abc"))
     }
 
     // MARK: - 状态展示
@@ -57,48 +105,129 @@ final class DSHLaunchUITests: XCTestCase {
 
     // MARK: - 端口 / 时间
 
-    func testPortTextPrefersActivePort() {
+    func testPortAndTimeText() {
         XCTAssertEqual(DSHLaunchPresentation.portText(activePort: 3099, fallback: 3080), "3099")
         XCTAssertEqual(DSHLaunchPresentation.portText(activePort: nil, fallback: 3081), "3081")
-    }
-
-    func testStartedAtText() {
         XCTAssertEqual(DSHLaunchPresentation.startedAtText(nil), "尚未启动")
         XCTAssertTrue(DSHLaunchPresentation.startedAtText(Date()).hasPrefix("启动于 "))
     }
 
-    // MARK: - 版本列表
+    // MARK: - 实例模型
 
-    func testFilteredVersionsAndLatest() {
-        let versions = [
-            DSHInstalledVersion(version: "1.1.0", installedAt: Date(), path: "/tmp/v/1.1.0", sizeBytes: 1_234_567),
-            DSHInstalledVersion(version: "1.0.0", installedAt: Date(), path: "/tmp/v/1.0.0", sizeBytes: 100)
-        ]
-        XCTAssertEqual(DSHLaunchPresentation.filteredVersions(versions, query: "1.1").map(\.version), ["1.1.0"])
-        XCTAssertEqual(DSHLaunchPresentation.filteredVersions(versions, query: "  ").count, 2)
-        XCTAssertEqual(DSHLaunchPresentation.filteredVersions(versions, query: "9.9").count, 0)
-
-        XCTAssertTrue(DSHLaunchPresentation.isLatest(versions[0], latestVersion: "1.1.0"))
-        XCTAssertFalse(DSHLaunchPresentation.isLatest(versions[1], latestVersion: "1.1.0"))
-        XCTAssertFalse(DSHLaunchPresentation.isLatest(versions[0], latestVersion: nil))
-    }
-
-    func testVersionSubtitleShowsDateAndSize() {
-        let version = DSHInstalledVersion(
-            version: "1.1.0",
-            installedAt: Date(timeIntervalSince1970: 1_800_000_000),
-            path: "/tmp/v/1.1.0",
-            sizeBytes: 2_400_000
+    func testInstanceModelFieldsAndConvenienceInit() {
+        let instance = makeInstance(
+            id: "ins-1", name: "我的实例", dshVersion: "1.1.0",
+            kind: .pack, packName: "Starter Kit", packVersion: "1.2.0"
         )
-        let subtitle = DSHLaunchPresentation.versionSubtitle(version)
-        XCTAssertTrue(subtitle.contains(":"), "应显示安装时间：\(subtitle)")
-        XCTAssertTrue(subtitle.contains("·"), "日期与体积应分隔：\(subtitle)")
-        XCTAssertTrue(subtitle.contains("MB"), "应显示真实体积：\(subtitle)")
-        XCTAssertEqual(DSHLaunchPresentation.sizeText(nil), "—")
-        XCTAssertEqual(DSHLaunchPresentation.sizeText(0), "—")
+        XCTAssertEqual(instance.id, "ins-1")
+        XCTAssertEqual(instance.name, "我的实例")
+        XCTAssertEqual(instance.dshVersion, "1.1.0")
+        XCTAssertEqual(instance.version, "1.1.0", "version 兼容属性应等于 dshVersion")
+        XCTAssertTrue(instance.isPack)
+        XCTAssertEqual(instance.packName, "Starter Kit")
+        XCTAssertEqual(instance.packVersion, "1.2.0")
+
+        // 兼容构造器（旧测试 / 旧目录迁移）。
+        let legacy = DSHInstalledVersion(version: "1.0.0", installedAt: Date(), path: "/tmp/v1", sizeBytes: 10)
+        XCTAssertEqual(legacy.id, "1.0.0")
+        XCTAssertEqual(legacy.dshVersion, "1.0.0")
+        XCTAssertFalse(legacy.isPack)
     }
 
-    // MARK: - 启动条件
+    func testFilteredInstancesSupportsSameDSHVersionWithDifferentNames() {
+        let instances = [
+            makeInstance(id: "ins-1", name: "PVP 整合", dshVersion: "1.1.0"),
+            makeInstance(id: "ins-2", name: "PVP 整合 副本", dshVersion: "1.1.0"),
+            makeInstance(id: "ins-3", name: "建筑服", dshVersion: "1.0.0")
+        ]
+        XCTAssertEqual(DSHLaunchPresentation.filteredInstances(instances, query: "PVP").map(\.id), ["ins-1", "ins-2"])
+        XCTAssertEqual(DSHLaunchPresentation.filteredInstances(instances, query: "1.0.0").map(\.id), ["ins-3"])
+        XCTAssertEqual(DSHLaunchPresentation.filteredInstances(instances, query: "INS-2").map(\.id), ["ins-2"])
+        XCTAssertEqual(DSHLaunchPresentation.filteredInstances(instances, query: "  ").count, 3)
+        XCTAssertEqual(DSHLaunchPresentation.filteredInstances(instances, query: "不存在").count, 0)
+    }
+
+    func testInstanceSubtitlesAndPackBadge() {
+        let vanilla = makeInstance(id: "ins-1", name: "实例 A", dshVersion: "1.1.0", size: 2_400_000)
+        XCTAssertEqual(DSHLaunchPresentation.listSubtitle(vanilla), "DSH 1.1.0")
+        let detail = DSHLaunchPresentation.detailSubtitle(vanilla)
+        XCTAssertTrue(detail.hasPrefix("DSH 1.1.0"), "副标题应包含 DSH 版本：\(detail)")
+        XCTAssertTrue(detail.contains("安装"), "副标题应包含安装时间：\(detail)")
+        XCTAssertTrue(detail.contains("MB"), "副标题应包含体积：\(detail)")
+
+        XCTAssertNil(DSHLaunchPresentation.packInfoText(vanilla))
+        let pack = makeInstance(
+            id: "ins-pack", name: "Starter", dshVersion: "1.0.0",
+            kind: .pack, packName: "Starter Kit", packVersion: "1.2.0"
+        )
+        XCTAssertEqual(DSHLaunchPresentation.packInfoText(pack), "整合包：Starter Kit 1.2.0")
+        XCTAssertEqual(DSHLaunchPresentation.instanceBadge(pack, isRunning: false), "整合包")
+        XCTAssertEqual(DSHLaunchPresentation.instanceBadge(pack, isRunning: true), "运行中")
+        XCTAssertNil(DSHLaunchPresentation.instanceBadge(vanilla, isRunning: false))
+    }
+
+    func testRunningInstanceMatchesByIDNotVersion() {
+        let first = makeInstance(id: "ins-1", name: "实例 1", dshVersion: "1.1.0")
+        let second = makeInstance(id: "ins-2", name: "实例 2", dshVersion: "1.1.0")
+
+        XCTAssertTrue(DSHLaunchPresentation.isRunning(first, activeInstanceID: "ins-1"))
+        XCTAssertFalse(DSHLaunchPresentation.isRunning(second, activeInstanceID: "ins-1"))
+        XCTAssertFalse(DSHLaunchPresentation.isRunning(first, activeInstanceID: nil))
+        XCTAssertFalse(DSHLaunchPresentation.isRunning(first, activeInstanceID: ""))
+
+        let running = DSHLaunchPresentation.runningInstance(in: [first, second], activeInstanceID: "ins-2")
+        XCTAssertEqual(running?.id, "ins-2")
+        XCTAssertNil(DSHLaunchPresentation.runningInstance(in: [first, second], activeInstanceID: "missing"))
+    }
+
+    // MARK: - 整合包导出入口
+
+    func testExportMenuTitlesAndFileName() {
+        XCTAssertTrue(DSHLaunchPresentation.exportMenuTitle(runtime: .bundled).contains("整合包"))
+        XCTAssertTrue(DSHLaunchPresentation.exportMenuTitle(runtime: .bundled).contains("完整包"))
+        XCTAssertTrue(DSHLaunchPresentation.exportMenuTitle(runtime: .online).contains("轻量包"))
+
+        XCTAssertEqual(DSHLaunchPresentation.exportFileName(instanceName: "Starter Kit"), "Starter Kit.dshpack")
+        XCTAssertEqual(DSHLaunchPresentation.exportFileName(instanceName: "a/b:c"), "a-b-c.dshpack")
+        XCTAssertEqual(DSHLaunchPresentation.exportFileName(instanceName: "   "), "dsh-instance.dshpack")
+        XCTAssertTrue(DSHLaunchPresentation.exportFileName(instanceName: "x").hasSuffix(".dshpack"))
+
+        let instance = makeInstance(
+            id: "ins-pack", name: "Starter", dshVersion: "1.0.0",
+            kind: .pack, packName: "Starter Kit", packVersion: "1.2.0"
+        )
+        XCTAssertEqual(DSHLaunchPresentation.exportPackName(instance: instance), "Starter")
+        XCTAssertEqual(DSHLaunchPresentation.exportPackVersion(instance: instance), "1.2.0")
+        XCTAssertNotNil(DSHLaunchPresentation.exportDisabledReason(snapshotMode: true, isBusy: false))
+        XCTAssertNotNil(DSHLaunchPresentation.exportDisabledReason(snapshotMode: false, isBusy: true))
+        XCTAssertNil(DSHLaunchPresentation.exportDisabledReason(snapshotMode: false, isBusy: false))
+    }
+
+    func testUninstallDisabledReasonPriority() {
+        let instance = makeInstance(id: "ins-1", name: "实例", dshVersion: "1.1.0")
+        XCTAssertTrue(
+            DSHLaunchPresentation.uninstallDisabledReason(
+                instance: instance, activeInstanceID: nil, isBusy: false, isInstalling: true
+            )?.contains("安装") == true
+        )
+        XCTAssertTrue(
+            DSHLaunchPresentation.uninstallDisabledReason(
+                instance: instance, activeInstanceID: nil, isBusy: true, isInstalling: false
+            )?.contains("停止") == true
+        )
+        XCTAssertTrue(
+            DSHLaunchPresentation.uninstallDisabledReason(
+                instance: instance, activeInstanceID: "ins-1", isBusy: false, isInstalling: false
+            )?.contains("正在运行") == true
+        )
+        XCTAssertNil(
+            DSHLaunchPresentation.uninstallDisabledReason(
+                instance: instance, activeInstanceID: "other", isBusy: false, isInstalling: false
+            )
+        )
+    }
+
+    // MARK: - 启停 / 安装条件
 
     func testStartDisabledReasonPriority() {
         XCTAssertEqual(
@@ -111,7 +240,7 @@ final class DSHLaunchUITests: XCTestCase {
         )
         XCTAssertEqual(
             DSHLaunchPresentation.startDisabledReason(hasSelection: false, hasNode: true, isInstalling: false, isBusy: false),
-            "请先在左侧选择已安装的 DSH 版本"
+            "请先在左侧选择已安装的 DSH 实例"
         )
         XCTAssertEqual(
             DSHLaunchPresentation.startDisabledReason(hasSelection: true, hasNode: false, isInstalling: false, isBusy: false),
@@ -133,7 +262,7 @@ final class DSHLaunchUITests: XCTestCase {
         XCTAssertFalse(DSHLaunchPresentation.isInstallFailed(.idle))
     }
 
-    // MARK: - 日志
+    // MARK: - 日志 / 环境
 
     func testLogTailAndTone() {
         let logs = (0..<20).map { "line-\($0)" }
@@ -154,24 +283,19 @@ final class DSHLaunchUITests: XCTestCase {
         }
     }
 
-    // MARK: - 环境摘要
-
     func testEnvironmentText() {
         XCTAssertEqual(DSHLaunchEnvironment(nodePath: nil, packageManager: nil).environmentText, "未找到 Node.js 运行时")
         XCTAssertEqual(
             DSHLaunchEnvironment(nodePath: "/usr/local/bin/node", packageManager: "pnpm").environmentText,
             "Node /usr/local/bin/node · pnpm"
         )
-        XCTAssertEqual(
-            DSHLaunchEnvironment(nodePath: "/usr/local/bin/node", packageManager: nil).environmentText,
-            "Node /usr/local/bin/node · 未找到 pnpm / npm"
-        )
         XCTAssertFalse(DSHLaunchEnvironment(nodePath: nil, packageManager: "pnpm").hasNode)
+        XCTAssertTrue(DSHLaunchEnvironment.placeholder.isPlaceholder)
     }
 
     // MARK: - 两主题 1080×720 离屏渲染
 
-    /// 真实渲染 DSH 启动页（整壳，DSH 产品）：两主题 1080×720，任一渲染失败 / 崩溃即测试失败。
+    /// 真实渲染 DSH 启动页（整壳，DSH 产品）：多实例同名版本 + 整合包实例 + 空态，两主题 1080×720。
     /// 设置 `DSH_LAUNCH_SNAPSHOT_DIR` 时把 PNG 写盘，便于人工检查是否溢出。
     @MainActor
     func testOffscreenRenderDSHLaunchPageAtMinimumWindow() async throws {
@@ -185,31 +309,25 @@ final class DSHLaunchUITests: XCTestCase {
         let accountStore = AccountStore(settings: settings, tokenStore: InMemoryAuthTokenStore())
         let engine = LauncherEngine(settings: settings, accountStore: accountStore)
 
-        // 临时 DSH 目录：预置两个"已安装版本"（含入口脚本与安装元数据），不碰用户真实目录。
+        // 临时 DSH 目录：三个实例（同 DSH 版本两个 + 一个整合包实例），不碰用户真实目录。
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("DSHLaunchUITests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let paths = DSHPaths(root: root, homeRoot: root.appendingPathComponent("home", isDirectory: true))
+        let paths = DSHPaths(root: root, homeRoot: root.appendingPathComponent("homes", isDirectory: true))
         try paths.ensureDirectories()
 
-        struct InstallMetadata: Encodable {
-            let version: String
-            let installedAt: Date
-            let sizeBytes: Int64?
-        }
-        for (version, size) in [("1.1.0", Int64(2_400_000)), ("1.0.0", Int64(1_800_000))] {
-            let script = paths.cliScript(for: version)
-            try FileManager.default.createDirectory(
-                at: script.deletingLastPathComponent(),
-                withIntermediateDirectories: true
+        let instances = [
+            makeInstance(id: "ins-a", name: "PVP 整合", dshVersion: "1.1.0", size: 2_400_000),
+            makeInstance(id: "ins-b", name: "PVP 整合 副本", dshVersion: "1.1.0", size: 2_100_000),
+            makeInstance(
+                id: "ins-pack", name: "Starter Kit", dshVersion: "1.0.0", size: 3_600_000,
+                kind: .pack, packName: "Starter Kit", packVersion: "1.2.0"
             )
-            try "// fake dsh cli for offscreen tests\n".write(to: script, atomically: true, encoding: .utf8)
-            let metadata = InstallMetadata(version: version, installedAt: Date(), sizeBytes: size)
-            try JSONEncoder().encode(metadata).write(
-                to: paths.versionDirectory(version).appendingPathComponent("launcher-install.json"),
-                options: .atomic
-            )
+        ]
+        for instance in instances {
+            try seedInstance(instance, paths: paths)
         }
+        settings.dshSelectedInstanceID = "ins-a"
 
         let versions = DSHVersionStore(settings: settings, paths: paths)
         versions.setCatalogForTesting(
@@ -221,6 +339,13 @@ final class DSHLaunchUITests: XCTestCase {
         )
         let process = DSHProcessController(settings: settings, paths: paths)
         let plugins = DSHPluginStore(settings: settings, paths: paths)
+        let packs = DSHPackService(paths: paths, versions: versions, plugins: plugins, settings: settings)
+
+        // 模型侧断言：同版本多实例都保留、选中按实例 ID、整合包实例识别正确。
+        XCTAssertEqual(versions.installed.count, 3)
+        XCTAssertEqual(versions.installed.filter { $0.dshVersion == "1.1.0" }.count, 2)
+        XCTAssertEqual(versions.selectedInstalledVersion?.id, "ins-a")
+        XCTAssertEqual(versions.installed.filter(\.isPack).count, 1)
 
         let exportDirectory = ProcessInfo.processInfo.environment["DSH_LAUNCH_SNAPSHOT_DIR"]
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
@@ -234,6 +359,7 @@ final class DSHLaunchUITests: XCTestCase {
                 .environment(versions)
                 .environment(process)
                 .environment(plugins)
+                .environment(packs)
                 .launcherThemeEnvironment(manager)
                 .environment(\.colorScheme, theme.scheme)
                 .environment(\.launcherSnapshotMode, true)
@@ -249,32 +375,23 @@ final class DSHLaunchUITests: XCTestCase {
             XCTAssertGreaterThan(image.size.height, 0, "渲染尺寸异常：\(theme.id)")
 
             if let exportDirectory {
-                try? FileManager.default.createDirectory(at: exportDirectory, withIntermediateDirectories: true)
-                let tiff = try XCTUnwrap(image.tiffRepresentation, "无法导出 TIFF：\(theme.id)")
-                let bitmap = try XCTUnwrap(NSBitmapImageRep(data: tiff), "无法解码位图：\(theme.id)")
-                let png = try XCTUnwrap(
-                    bitmap.representation(using: .png, properties: [:]),
-                    "无法编码 PNG：\(theme.id)"
-                )
-                try png.write(to: exportDirectory.appendingPathComponent("dsh-launch-\(theme.id)-min.png"))
+                try savePNG(image, to: exportDirectory.appendingPathComponent("dsh-launch-instances-\(theme.id)-min.png"))
             }
         }
 
-        // 空态（没有任何已安装版本）：验证侧栏空态 + 启动卡"暂时无法启动"提示同样不溢出。
+        // 空态（没有任何实例）：侧栏空态 + 当前实例卡提示同样不能溢出。
         let emptyRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("DSHLaunchUITests-empty-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: emptyRoot) }
-        let emptyPaths = DSHPaths(root: emptyRoot, homeRoot: emptyRoot.appendingPathComponent("home", isDirectory: true))
+        let emptyPaths = DSHPaths(root: emptyRoot, homeRoot: emptyRoot.appendingPathComponent("homes", isDirectory: true))
         try emptyPaths.ensureDirectories()
         let emptySuite = "dsh.launch.ui.empty.\(UUID().uuidString.prefix(8))"
         let emptyDefaults = UserDefaults(suiteName: emptySuite) ?? .standard
         defer { emptyDefaults.removePersistentDomain(forName: emptySuite) }
-        let emptyVersions = DSHVersionStore(
-            settings: LauncherSettings(defaults: emptyDefaults),
-            paths: emptyPaths
-        )
+        let emptyVersions = DSHVersionStore(settings: LauncherSettings(defaults: emptyDefaults), paths: emptyPaths)
         let emptyProcess = DSHProcessController(settings: settings, paths: emptyPaths)
         let emptyPlugins = DSHPluginStore(settings: settings, paths: emptyPaths)
+        let emptyPacks = DSHPackService(paths: emptyPaths, versions: emptyVersions, plugins: emptyPlugins, settings: settings)
 
         for theme in LauncherThemes.all {
             manager.themeID = theme.id
@@ -284,6 +401,7 @@ final class DSHLaunchUITests: XCTestCase {
                 .environment(emptyVersions)
                 .environment(emptyProcess)
                 .environment(emptyPlugins)
+                .environment(emptyPacks)
                 .launcherThemeEnvironment(manager)
                 .environment(\.colorScheme, theme.scheme)
                 .environment(\.launcherSnapshotMode, true)
@@ -297,14 +415,22 @@ final class DSHLaunchUITests: XCTestCase {
             let image = try XCTUnwrap(renderer.nsImage, "DSH 启动页空态渲染失败：\(theme.id)")
 
             if let exportDirectory {
-                let tiff = try XCTUnwrap(image.tiffRepresentation, "无法导出 TIFF：\(theme.id)")
-                let bitmap = try XCTUnwrap(NSBitmapImageRep(data: tiff), "无法解码位图：\(theme.id)")
-                let png = try XCTUnwrap(
-                    bitmap.representation(using: .png, properties: [:]),
-                    "无法编码 PNG：\(theme.id)"
-                )
-                try png.write(to: exportDirectory.appendingPathComponent("dsh-launch-empty-\(theme.id)-min.png"))
+                try savePNG(image, to: exportDirectory.appendingPathComponent("dsh-launch-empty-\(theme.id)-min.png"))
             }
         }
+    }
+
+    // MARK: - 渲染辅助
+
+    @MainActor
+    private func savePNG(_ image: NSImage, to url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let tiff = try XCTUnwrap(image.tiffRepresentation, "无法导出 TIFF")
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: tiff), "无法解码位图")
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]), "无法编码 PNG")
+        try png.write(to: url)
     }
 }
