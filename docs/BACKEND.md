@@ -160,7 +160,7 @@ swift run MCLauncher --install 1.21.4                       # 真实下载安装
 
 ## 10. 测试覆盖
 
-`swift test` 共 **266 个用例**（全部离线）：
+`swift test` 共 **267 个用例**（全部离线）：
 
 - `LauncherBackendTests`（12）：规则求值、离线 UUID、参数替换与清理、版本 JSON 兼容、版本扫描、命令构建。
 - `SharedInteractionsTests`（20）：镜像 URL 改写、版本比较、实例重命名/复制/删除（真实临时目录）、启动历史持久化与"已停止"状态、玩家名校验、空值旗标清理、更新源解析、安装取消判定（`CancellationError` / `URLError.cancelled`）、父版本依赖保护与清理候选判龄。
@@ -188,7 +188,7 @@ LauncherALL 的第二个启动器管理官方 `@deepseek-ai/dsh` 的 **Web UI �
 | `Launcher/Pages/DSH/*` | 四个 DSH 页面（启动 / 下载 / 设置 / 更多），与 Minecraft 页面同构 |
 
 - **实例模型**：每个 DSH 安装是一个「实例」，目录为 `versions/<实例 UUID>`，元数据 `launcher-install.json` 记录 `id/name/dshVersion/kind(pack|vanilla)/packName/packVersion/installedAt/sizeBytes`。同一个 npm 版本可以安装多次，名字可自定义（默认 `DSH <版本>`）；旧版按版本号建目录的数据会自动迁移成 legacy 实例，旧的共享 home 会迁移到第一个 legacy 实例的独立 home。
-- **下载源**：`https://registry.npmjs.org/@deepseek-ai/dsh`，包名斜杠编码为 `%2f`（不能二次编码）；可安装全部历史版本（每个约 850 MB）。安装优先用 npm（pnpm 10+ 会因 `ERR_PNPM_IGNORED_BUILDS` 阻止 koffi / node-pty 等原生依赖的构建脚本），只有 pnpm 时自动解析被忽略的包名并用 `--allow-build` 重试。完成后校验 `node_modules/@deepseek-ai/dsh/lib/bin.js`。
+- **下载源**：`https://registry.npmjs.org/@deepseek-ai/dsh`，包名斜杠编码为 `%2f`（不能二次编码）；可安装全部历史版本（每个约 850 MB）。安装优先用 npm（pnpm 10+ 会因 `ERR_PNPM_IGNORED_BUILDS` 阻止 koffi / node-pty 等原生依赖的构建脚本），只有 pnpm 时自动解析被忽略的包名并用 `--allow-build` 重试。完成后校验 `node_modules/@deepseek-ai/dsh/lib/bin.js`。安装前会用 pnpm 的 `--lockfile-only --ignore-scripts` 做依赖可用性预检（约 5–30 秒）：遇到依赖 404（如 `0.0.1-rc.1` 的部分旧依赖已下架）直接报「依赖已不可用」，避免 npm 静默解析数分钟；预检非 404 失败时降级继续 npm。安装期间有每 5 秒的心跳日志，npm 静默下载时 UI 不会看起来卡死。
 - **Node**：优先登录 shell 里的标准 Node（nvm/Homebrew），其次 DSH 桌面端自带运行时；GUI 进程 PATH 很窄，因此会通过登录 shell 与已知路径探测，子进程 PATH 会补齐 node / pnpm / npm 目录。
 - **启动**：`node …/bin.js --profile web --no-open --port <port>`（端口 0 交给 dsh 自动分配）；每个实例的 `DSH_HOME` 是 `~/Library/Application Support/BlockLauncher/DSH/homes/<实例 UUID>`，首次启动把 `~/.dsh/.credentials.yaml`、`.anonymous-user-id`、`settings.yaml` 软链进来复用登录 / API Key；插件、会话、profile 因此按实例隔离。解析 stdout 的 `dsh web: <url>` 得到带一次性 token 的地址；日志里 token 脱敏成 `token=***`，日志文件 0600。
 - **插件市场**：加载源默认 `https://awesome-dsh-plugin.com/plugins.json`（dshmarket 自身使用的数据源）——字段 `name/owner/url/page/category/description{en,zh}/npm/version/stars/capabilities/install`；安装标识优先 `npm`，否则取 `install` 命令 `add` 后的 spec。安装 / 卸载真实执行 `dsh plugin --profile web add|remove <spec>`，并读取 `$DSH_HOME/profiles/web/package.json` 判定已安装。

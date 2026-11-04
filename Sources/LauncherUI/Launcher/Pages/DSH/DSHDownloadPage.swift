@@ -1496,7 +1496,8 @@ public struct DSHDownloadPage: View {
             await versions.install(dshVersion, name: name)
             switch versions.installState {
             case .failed(_, let message):
-                router.showToast("安装失败：\(message)", tone: .danger)
+                let cleaned = message.replacingOccurrences(of: "DSH 安装失败：", with: "")
+                router.showToast("安装失败：\(cleaned)", tone: .danger)
             case .idle:
                 if let instance = versions.selectedInstalledVersion, instance.dshVersion == dshVersion {
                     router.showToast("已安装实例「\(instance.name)」（DSH \(dshVersion)）", tone: .success)

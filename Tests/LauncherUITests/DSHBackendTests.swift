@@ -205,6 +205,21 @@ final class DSHBackendTests: XCTestCase {
         XCTAssertTrue(DSHVersionStore.ignoredBuildPackages(in: "no error here").isEmpty)
     }
 
+    func testUnavailableDependencyParsing() {
+        let pnpmOutput = """
+          × adding a new package
+          ╰─▶ Failed to resolve dependency tree: GET https://registry.npmjs.org/
+              @deepseek-ai%2Fdsh-agent-tool-mode: Not Found - 404
+          help: @deepseek-ai/dsh-agent-tool-mode is not in the npm registry, or you
+                have no permission to fetch it.
+          """
+        XCTAssertEqual(
+            DSHVersionStore.unavailableDependency(in: pnpmOutput),
+            "@deepseek-ai/dsh-agent-tool-mode"
+        )
+        XCTAssertNil(DSHVersionStore.unavailableDependency(in: "Progress: resolved 10, reused 10"))
+    }
+
     // MARK: - 已安装版本扫描
 
     @MainActor

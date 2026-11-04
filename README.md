@@ -34,7 +34,7 @@ swift run MCLauncher --export-app-snapshots Snapshots/App
 swift run MCLauncher --export-snapshots Snapshots
 python3 tools/make_contact_sheet.py   # 需要 Pillow，生成对比图
 
-# 测试（266 个用例，全部离线）
+# 测试（267 个用例，全部离线）
 swift test
 ```
 
@@ -125,7 +125,7 @@ Sources/
     Shell/                    # 画廊侧栏外壳
     XML/                      # XML UI 引擎（解析 / 状态 / 动作 / 渲染）
   MCLauncher/                 # 可执行 App 入口 + 各截图导出器 + CLI 工具
-Tests/LauncherUITests/        # 266 个用例：后端 / XML / 四页交互 / 共享交互层 / 正版登录 / 产品切换 / DSH
+Tests/LauncherUITests/        # 267 个用例：后端 / XML / 四页交互 / 共享交互层 / 正版登录 / 产品切换 / DSH
 docs/
   BACKEND.md                  # 真实后端与安装/启动链路
   APP-UI.md                   # 四页交互契约（控件 → 真实行为）
@@ -186,7 +186,7 @@ swift run MCLauncher --export-xml-snapshots Snapshots/XML
 
 ## 测试与验证
 
-- `swift test`：**266 个用例**，全部离线（网络层用 `URLProtocol` stub / 认证服务注入替身）。
+- `swift test`：**267 个用例**，全部离线（网络层用 `URLProtocol` stub / 认证服务注入替身）。
   - `LauncherBackendTests`（12）：规则求值、离线 UUID、参数替换、版本 JSON 兼容、版本扫描、命令构建
   - `AuthFeatureTests`（21）：设备码 / 刷新令牌 / XBL / XSTS / Minecraft 登录请求构造、响应解码、XSTS 错误码映射、会话刷新窗口、启动身份、登录状态机（成功 / 失败 / 取消 / 退出 / 令牌刷新）、正版启动参数注入与令牌脱敏
   - `XMLUITests`（16）：XML 解析 / 诊断 / 状态 / 插值 / 内置动作 / 渲染分发
@@ -212,6 +212,7 @@ swift run MCLauncher --export-xml-snapshots Snapshots/XML
 - 未接入 401 自动重试、多设备登录管理与企业租户（仅个人微软账户）。
 - DSH 启动器管理的是官方 `@deepseek-ai/dsh` 的 **Web UI 版本**：每个版本 ~850 MB（含依赖），安装需要 Node 20+ 与 pnpm/npm（优先系统 Node，其次 DSH 桌面端自带运行时）；启动后 Web UI 在默认浏览器打开，不内嵌到启动器。
 - DSH 的每个实例有独立 `DSH_HOME`（`~/Library/Application Support/BlockLauncher/DSH/homes/<实例 UUID>`），首次启动会把 `~/.dsh/.credentials.yaml` 等凭据软链进来复用登录 / API Key；插件、会话与系统 DSH 的 web profile 分开，旧版共享 home 会自动迁移。
+- 很旧的实验版本（例如 `0.0.1-rc.1`）的部分依赖已从 npm 下架，无法安装；安装前会用 pnpm 做依赖预检（约 5–30 秒），遇到 404 会直接提示「该版本依赖已不可用」，不会长时间卡在「准备安装环境」。
 - `.dshpack` 是 LauncherALL 私有格式（不是 dsh 官方格式）：`bundled` 包含 DSH 本体（压缩后几百 MB，离线可用），`online` 只记录版本号（导入时需要网络）；插件可附带 npm tarball 离线载荷，没有载荷的插件会在线安装。
 - 插件安装需要 pnpm：优先系统 pnpm，否则用 DSH 桌面端自带的 pnpm 生成 shim；没有 Node/pnpm 时 UI 会给出明确提示而不是假装成功。
 - 仅 macOS（osx / arm64、x86_64）规则；Windows / Linux 需要补规则与路径。

@@ -92,7 +92,8 @@ enum LauncherCLI {
         print("… 安装 DSH \(version)（实例名：\(name ?? DSHVersionStore.defaultName(for: version))）")
         await store.install(version, name: name)
         if case .failed(_, let message) = store.installState {
-            print("✗ 安装失败：\(message)")
+            let cleaned = message.replacingOccurrences(of: "DSH 安装失败：", with: "")
+            print("✗ 安装失败：\(cleaned)")
             return 1
         }
         guard let selected = store.selectedInstalledVersion else {

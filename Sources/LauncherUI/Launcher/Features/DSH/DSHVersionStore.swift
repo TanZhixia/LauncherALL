@@ -278,6 +278,116 @@ public final class DSHVersionStore {
         installTask = nil
     }
 
+    /// 安装期间的心跳日志：npm 在解析/下载依赖时可能长时间没有输出，避免 UI 看起来“卡住”。
+    private func startInstallHeartbeat(dshVersion: String) -> Task<Void, Never> {
+        Task { [weak self] in
+            var elapsed = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled, let self else { return }
+                elapsed += 5
+                guard case .installing(let version, let phase) = self.installState,
+                      version == dshVersion else { return }
+                if self.installLog.count < 400 {
+                    let hint = phase == .downloading ? "（npm 正在静默解析 / 下载依赖，请耐心等待）" : ""
+                    self.installLog.append("… 安装进行中，已用时 \(elapsed) 秒\(hint)")
+                }
+            }
+        }
+    }
+
+    /// 用 pnpm 的 lockfile-only 模式快速预检依赖图：
+    /// - 某些旧版本（如 0.0.1-rc.1）依赖已被 npm 下架，npm 会静默解析数分钟后才报 404；
+    /// - pnpm 解析约 5–30 秒即可发现缺失包，提前给出明确错误；
+    /// - 预检失败但不是 404（网络/peer 等）时降级继续 npm 安装，避免误杀。
+    private func preflightDependencies(
+        dshVersion: String,
+        node: URL,
+        manager: DSHPackageManager,
+        directory: URL,
+        environment: [String: String]
+    ) async throws {
+        guard manager.kind == .pnpm else {
+            appendInstallLog("当前只有 npm，跳过依赖预检（安装可能较慢）")
+            return
+        }
+        let lockfile = directory.appendingPathComponent("pnpm-lock.yaml")
+        let nodeModules = directory.appendingPathComponent("node_modules")
+        defer {
+            try? FileManager.default.removeItem(at: lockfile)
+            try? FileManager.default.removeItem(at: nodeModules)
+        }
+        let result: DSHCommandRunner.Result
+        do {
+            result = try await Self.runWithTimeout(seconds: 90) {
+                try await DSHCommandRunner.run(
+                    executable: manager.executable,
+                    arguments: [
+                        "add", "@deepseek-ai/dsh@\(dshVersion)",
+                        "--lockfile-only", "--ignore-scripts",
+                        "--reporter=append-only",
+                        "--config.strictDepBuilds=false"
+                    ],
+                    environment: environment,
+                    workingDirectory: directory
+                ) { [weak self] line in
+                    Task { @MainActor in
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        guard !trimmed.isEmpty, self?.installLog.count ?? 0 < 400 else { return }
+                        self?.installLog.append(trimmed)
+                    }
+                }
+            }
+        } catch {
+            appendInstallLog("依赖预检未完成（\(error.localizedDescription)），继续用 npm 安装")
+            return
+        }
+        guard result.exitCode != 0 else {
+            appendInstallLog("✓ 依赖检查通过，开始下载并安装")
+            return
+        }
+        if let missing = Self.unavailableDependency(in: result.output) {
+            throw DSHError.installFailed(
+                "该版本的依赖在 npm 上已不可用（\(missing) 返回 404），很可能已被下架，无法安装；请选择其它 DSH 版本。"
+            )
+        }
+        appendInstallLog("依赖预检未通过（非 404），继续用 npm 安装")
+    }
+
+    private static func runWithTimeout(
+        seconds: UInt64,
+        operation: @escaping @Sendable () async throws -> DSHCommandRunner.Result
+    ) async throws -> DSHCommandRunner.Result {
+        try await withThrowingTaskGroup(of: DSHCommandRunner.Result.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+                throw DSHError.installFailed("依赖预检超时（\(seconds) 秒）")
+            }
+            guard let result = try await group.next() else {
+                throw DSHError.installFailed("依赖预检没有返回结果")
+            }
+            group.cancelAll()
+            return result
+        }
+    }
+
+    /// 从 pnpm 输出里提取不可用的包名（用于 404 提示）。
+    nonisolated static func unavailableDependency(in output: String) -> String? {
+        let hints = ["is not in the npm registry", "Not Found - 404", "404 Not Found", "could not be found"]
+        for rawLine in output.split(separator: "\n") {
+            let line = String(rawLine)
+            guard hints.contains(where: { line.contains($0) }) else { continue }
+            if let range = line.range(
+                of: #"@[A-Za-z0-9._-]+/[A-Za-z0-9._-]+"#,
+                options: .regularExpression
+            ) {
+                return String(line[range])
+            }
+        }
+        return nil
+    }
+
     private func performInstall(
         instanceID: String,
         dshVersion: String,
@@ -307,6 +417,16 @@ public final class DSHVersionStore {
                 node: node,
                 extraDirectories: manager.nodeScript == nil ? [manager.executable.deletingLastPathComponent()] : []
             )
+            appendInstallLog("正在准备安装目录…")
+            appendInstallLog("正在检查该版本的 npm 依赖是否可用（预检，约 5–30 秒）…")
+            try await preflightDependencies(
+                dshVersion: dshVersion,
+                node: node,
+                manager: manager,
+                directory: directory,
+                environment: environment
+            )
+
             var lineCount = 0
             let lineHandler: @Sendable (String) -> Void = { [weak self] line in
                 Task { @MainActor in
@@ -325,6 +445,10 @@ public final class DSHVersionStore {
 
             // 版本安装优先用 npm：pnpm 10+ 默认阻止依赖的构建脚本（ERR_PNPM_IGNORED_BUILDS），
             // 而 DSH 依赖 koffi / node-pty 等需要 postinstall 的原生模块。
+            installState = .installing(version: dshVersion, phase: .downloading)
+            appendInstallLog("开始用 npm 安装 @deepseek-ai/dsh@\(dshVersion)（依赖较多，下载期间可能没有输出）…")
+            let heartbeat = startInstallHeartbeat(dshVersion: dshVersion)
+            defer { heartbeat.cancel() }
             var result: DSHCommandRunner.Result
             if let npmCLI = DSHExecutables.npmCLI(node: node) {
                 result = try await DSHCommandRunner.run(
@@ -379,7 +503,12 @@ public final class DSHVersionStore {
 
             try Task.checkCancellation()
             guard result.exitCode == 0 else {
-                let tail = result.output.split(separator: "\n").suffix(8).joined(separator: "\n")
+                let tail = result.output
+                    .split(separator: "\n")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                    .suffix(16)
+                    .joined(separator: "\n")
                 throw DSHError.installFailed(tail.isEmpty ? "包管理器退出码 \(result.exitCode)" : tail)
             }
             guard fileManager.fileExists(atPath: paths.cliScript(for: instanceID).path) else {
